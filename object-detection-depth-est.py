@@ -106,8 +106,8 @@ def main():
                             point_cloud_value[1] * point_cloud_value[1] +
                             point_cloud_value[2] * point_cloud_value[2])
 
-        point_cloud_np = point_cloud.get_data()
-        point_cloud_np.dot(tr_np)
+        # point_cloud_np = point_cloud.get_data() # invalid value encountered in cast
+        # point_cloud_np.dot(tr_np)
         print("Distance to Camera at ({}, {}) (image center): {:1.3} m".format(x, y, distance), end="\r")
         if np.isnan(distance) or np.isinf(distance):
             # Increment the loop
