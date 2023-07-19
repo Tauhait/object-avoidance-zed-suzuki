@@ -60,7 +60,7 @@ def main():
     detection_parameters.enable_tracking = True # Objects will keep the same ID between frames
     detection_parameters.enable_segmentation = True # Outputs 2D masks over detected objects
     detection_parameters.image_sync = True
-    detection_parameters.enable_mask_output = True
+    # detection_parameters.enable_mask_output = True
     # choose a detection model
     detection_parameters.detection_model = sl.OBJECT_DETECTION_MODEL.MULTI_CLASS_BOX_ACCURATE
 
