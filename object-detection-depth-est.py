@@ -88,44 +88,66 @@ def main():
     mirror_ref = sl.Transform()
     mirror_ref.set_translation(sl.Translation(TRANSLATION[0], TRANSLATION[1], TRANSLATION[2]))
     tr_np = mirror_ref.m
+    while zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
+        # Retrieve left image
+        zed.retrieve_image(image, sl.VIEW.LEFT)
+        # Retrieve depth map. Depth is aligned on the left image
+        zed.retrieve_measure(depth, sl.MEASURE.DEPTH)
+        # Retrieve colored point cloud. Point cloud is aligned on the left image.
+        zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA)
 
-    while True:
-        i = 0
-        avg_dist = 0
-        while i < FRAMES:
-            # A new image is available if grab() returns SUCCESS
-            if zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
-                # Retrieve left image
-                zed.retrieve_image(image, sl.VIEW.LEFT)
-                # Retrieve depth map. Depth is aligned on the left image
-                zed.retrieve_measure(depth, sl.MEASURE.DEPTH)
-                # Retrieve colored point cloud. Point cloud is aligned on the left image.
-                zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA)
+        # Get and print distance value in mm at the center of the image
+        # We measure the distance camera - object using Euclidean distance
+        x = round(image.get_width() / 2)
+        y = round(image.get_height() / 2)
+        err, point_cloud_value = point_cloud.get_value(x, y)
 
-                # Get and print distance value in mm at the center of the image
-                # We measure the distance camera - object using Euclidean distance
-                x = round(image.get_width() / 2)
-                y = round(image.get_height() / 2)
-                err, point_cloud_value = point_cloud.get_value(x, y)
+        distance = math.sqrt(point_cloud_value[0] * point_cloud_value[0] +
+                            point_cloud_value[1] * point_cloud_value[1] +
+                            point_cloud_value[2] * point_cloud_value[2])
 
-                distance = math.sqrt(point_cloud_value[0] * point_cloud_value[0] +
-                                    point_cloud_value[1] * point_cloud_value[1] +
-                                    point_cloud_value[2] * point_cloud_value[2])
+        point_cloud_np = point_cloud.get_data()
+        point_cloud_np.dot(tr_np)
+        print("Distance to Camera at ({}, {}) (image center): {:1.3} m".format(x, y, distance), end="\r")
+        if np.isnan(distance) or np.isinf(distance):
+            # Increment the loop
+            continue
+        else:
+            print("Can't estimate distance at this position.")
+            print("Your camera is probably too close to the scene, please move it backwards.\n")
 
-                point_cloud_np = point_cloud.get_data()
-                point_cloud_np.dot(tr_np)
+        objects = sl.Objects() # Structure containing all the detected objects
+        zed.retrieve_objects(objects, detection_parameters_rt) # Retrieve the detected objects
+        # Count the number of objects detected
+        print("{} Object(s) detected".format(len(objects.object_list)))
+        for object in objects.object_list:
+            if object.confidence * 100 <  DETECTION_CONF_THRESHOLD:
+                continue
+            
+            object_id = object.id # Get the object id
+            object_position = object.position # Get the object position
+            object_velocity = object.velocity # Get the object velocity
+            object_tracking_state = object.tracking_state # Get the tracking state of the object
+            object_2Dbbox = object.bounding_box_2d; # Get the 2D bounding box of the object
+            object_3Dbbox = object.bounding_box; # Get the 3D Bounding Box of the object
+            print("\nID: {}\nVelocity: {}".format(object_id, object_velocity))
+            pos_x, pos_y, pos_z = object_position
+            print("\n3D position : [{0},{1},{2}]".format(pos_x, pos_y, pos_z))
+            print("\nBounding box 2D :")
 
-                if not np.isnan(distance) and not np.isinf(distance):
-                    # Increment the loop
-                    i = i + 1
-                    avg_dist += distance
-                else:
-                    print("Can't estimate distance at this position.")
-                    print("Your camera is probably too close to the scene, please move it backwards.\n")
-                sys.stdout.flush()
-        avg_dist = distance / FRAMES
-        print("Distance to Camera at ({}, {}) (image center): {:1.3} m".format(x, y, avg_dist), end="\r")
+            for it in object_2Dbbox:            
+                print(" " + str(it), end='')
+            
+            print("\nBounding box 3D :")
+            
+            for it in object_3Dbbox:            
+                print(" " + str(it), end='')            
+            
+            if object_tracking_state == sl.OBJECT_TRACKING_STATE.OK:
+                print("\nObject {0} is tracked\n".format(object_id))
+        print("<======================================================================>")
     
+        sys.stdout.flush()        
     # Close the camera
     zed.close()
 
