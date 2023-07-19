@@ -87,7 +87,7 @@ def main():
 
     mirror_ref = sl.Transform()
     mirror_ref.set_translation(sl.Translation(TRANSLATION[0], TRANSLATION[1], TRANSLATION[2]))
-    tr_np = mirror_ref.m
+    # tr_np = mirror_ref.m
     while zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
         # Retrieve left image
         zed.retrieve_image(image, sl.VIEW.LEFT)
@@ -108,14 +108,13 @@ def main():
 
         # point_cloud_np = point_cloud.get_data() # invalid value encountered in cast
         # point_cloud_np.dot(tr_np)
-        print("Distance to Camera at ({}, {}) (image center): {:1.3} m".format(x, y, distance), end="\r")
+        
         if np.isnan(distance) or np.isinf(distance):
             # Increment the loop
-            continue
-        else:
             print("Can't estimate distance at this position.")
             print("Your camera is probably too close to the scene, please move it backwards.\n")
-
+            continue
+        print("Distance to Camera at ({}, {}) (image center): {:1.3} m".format(x, y, distance), end="\r")
         objects = sl.Objects() # Structure containing all the detected objects
         zed.retrieve_objects(objects, detection_parameters_rt) # Retrieve the detected objects
         # Count the number of objects detected
@@ -145,6 +144,8 @@ def main():
             
             if object_tracking_state == sl.OBJECT_TRACKING_STATE.OK:
                 print("\nObject {0} is tracked\n".format(object_id))
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
         print("<======================================================================>")
     
         sys.stdout.flush()        
