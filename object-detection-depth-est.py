@@ -7,6 +7,7 @@ import torch
 import matplotlib.path as mplPath
 import socket
 import time
+from ultralytics import YOLO
 
 FRAMES =  30
 CONF_THRESHOLD = 100
@@ -134,7 +135,7 @@ def open_camera():
         exit(1)
     # Create and set RuntimeParameters after opening the camera
     runtime_parameters = sl.RuntimeParameters()
-    runtime_parameters.sensing_mode = sl.SENSING_MODE.STANDARD
+    #runtime_parameters.sensing_mode = sl.SENSING_MODE.STANDARD
     runtime_parameters.confidence_threshold = CONF_THRESHOLD
     runtime_parameters.texture_confidence_threshold = CONF_THRESHOLD
     return zed, runtime_parameters
@@ -147,7 +148,8 @@ def get_image_depth_pointcloud():
 
 def load_model(device):
     #Load YOLOv5 model
-    model = torch.hub.load('', 'custom', path='./yolov5s.pt',source='local')   
+    #model = torch.hub.load('/usr/local/zed/samples/object-avoidance-zed-suzuki/pytorch_yolov8', model='yolov8',source='local', verbose=True, weights='yolov8.pt')   
+    model = YOLO("yolov8m.pt")
     #model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True, force_reload=True)
     model = model.to(device) 
     print("Model loaded")
@@ -218,6 +220,7 @@ def main(device):
     model = load_model(device)
     while zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
         start_time = time.time()
+        print(f"Time: {start_time}")
         zed.retrieve_image(image, sl.VIEW.RIGHT)        
         img_data_seq = image.get_data()
         (img_w, img_h) = (img_data_seq.shape[0], img_data_seq.shape[1])
@@ -288,4 +291,4 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     with torch.no_grad():
-        main()
+        main(device)
