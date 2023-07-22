@@ -8,6 +8,9 @@ import matplotlib.path as mplPath
 import socket
 import time
 from ultralytics import YOLO
+from torchvision import transforms
+import torch.nn.functional as F
+
 
 FRAMES =  30
 CONF_THRESHOLD = 100
@@ -18,6 +21,8 @@ ROI_W = [0.6, 0.21, 0.21, 0.6]
 DEPTH = 2000
 SAFE_DISTANCE = 25
 MAX_SPEED = 10
+IMG_SIZE = 416
+IOU_THRESHOLD = 0.45
 
 classes = ['person', 'bicycle', 'car', 'motorcycle', 'none', 'none', 'none', 
            'none', 'none', 'traffic light', 'none', 'stop sign', 'none']
@@ -147,12 +152,8 @@ def get_image_depth_pointcloud():
     return image, depth, point_cloud
 
 def load_model(device):
-    #Load YOLOv5 model
-    #model = torch.hub.load('/usr/local/zed/samples/object-avoidance-zed-suzuki/pytorch_yolov8', model='yolov8',source='local', verbose=True, weights='yolov8.pt')   
     model = YOLO("yolov8m.pt")
-    #model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True, force_reload=True)
-    model = model.to(device) 
-    print("Model loaded")
+    model.to(device)
     return model
 
 def get_roi(img_w, img_h):
@@ -162,8 +163,9 @@ def get_roi(img_w, img_h):
             [ROI_H[3] * img_h, ROI_W[3] * img_w] ]
     return roi
 
-def get_detect_point_with_conf(box):
-    object_class = int(box[5])
+def get_detect_point_with_conf(box, object_class):
+    if box is None or object_class is None:
+        return None, None, None, None
     if object_class < 4 or object_class == 11:
         xA = int(box[0])
         yA = int(box[1])
@@ -178,7 +180,9 @@ def get_detect_point_with_conf(box):
 
         y = bbox_center_point[1] + (bbox_height / 2)
         detect_point = (bbox_center_point[0], y)
-    return detect_point, conf, bbox_center_point, object_class
+        return detect_point, conf, bbox_center_point, object_class
+    else:
+        return None, None, None, None
 
 def get_distance_point_cloud(point_cloud_value):
     distance = math.sqrt(
@@ -214,44 +218,94 @@ def draw_object_distance(img, depth, bbox_center_point):
 def draw_roi(img, roi):
     cv2.polylines(img, np.array([roi], np.int32), True, (255, 0, 0), 2)
 
-def main(device):
+def xywh2abcd(xywh, im_shape):
+    output = np.zeros((4, 2))
+
+    # Center / Width / Height -> BBox corners coordinates
+    x_min = (xywh[0] - 0.5*xywh[2]) #* im_shape[1]
+    x_max = (xywh[0] + 0.5*xywh[2]) #* im_shape[1]
+    y_min = (xywh[1] - 0.5*xywh[3]) #* im_shape[0]
+    y_max = (xywh[1] + 0.5*xywh[3]) #* im_shape[0]
+
+    # A ------ B
+    # | Object |
+    # D ------ C
+
+    output[0][0] = x_min
+    output[0][1] = y_min
+
+    output[1][0] = x_max
+    output[1][1] = y_min
+
+    output[2][0] = x_min
+    output[2][1] = y_max
+
+    output[3][0] = x_max
+    output[3][1] = y_max
+    return output
+
+def main(model):
     zed, runtime_parameters = open_camera()
     image, depth, point_cloud = get_image_depth_pointcloud()
-    model = load_model(device)
     while zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
         start_time = time.time()
-        print(f"Time: {start_time}")
+
         zed.retrieve_image(image, sl.VIEW.RIGHT)        
-        img_data_seq = image.get_data()
-        (img_w, img_h) = (img_data_seq.shape[0], img_data_seq.shape[1])
+        img = image.get_data()
+        
+
+        (img_w, img_h) = (img.shape[0], img.shape[1])
+        print(f"Image size: height-{img_h} X width-{img_w}")
         roi = get_roi(img_w, img_h)
-        
+        img_data_seq = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
         poly_path = mplPath.Path(roi)
-        
+        #input_image = transformations(img_data_seq)
+        #input_image_batch = torch.unsqueeze(input_image, 0)
+
         draw_roi(img_data_seq, roi)
-        obj_detections = model(img_data_seq)
+        
+        #obj_detections = model(img_data_seq)
         
         zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA, sl.MEM.CPU)
         
         depth_list = []
         depth_list.append(DEPTH)
+        det_boxes = model.predict(img_data_seq, 
+                            save=False, 
+                            imgsz=IMG_SIZE, 
+                            conf=DETECTION_CONF_THRESHOLD / 100.0, 
+                            iou=IOU_THRESHOLD)[0].cpu().numpy().boxes
 
-        for box in obj_detections.xyxy[0]:
-            detect_point, conf, bbox_center_point, object_class = get_detect_point_with_conf(box)
-            if poly_path.contains_point(detect_point) and conf > DETECTION_CONF_THRESHOLD:
-                _, point_cloud_value = point_cloud.get_value( bbox_center_point[0], 
-                                                              bbox_center_point[1])
-                depth = get_distance_point_cloud(point_cloud_value)
-                if not np.isnan(depth) and not np.isinf(depth):
-                   draw_object_distance(img_data_seq, depth, bbox_center_point)
-                else:                    
-                    depth = DEPTH
-                    print("Can't estimate distance at this position.")
-                    print("Your camera is probably too close to the scene, please move it backwards.\n")
-                
-                depth_list.append(depth)
-                draw_bbox(img_data_seq, box)
-                draw_class_conf(img_data_seq, box, object_class, conf) 
+        # Creating ingestable objects for the ZED SDK
+
+        output = []
+        for det in det_boxes:
+            # xywh = det.xywh[0]
+            # obj = sl.CustomBoxObjectData()
+            # obj.bounding_box_2d = xywh2abcd(xywh, img.shape)
+            label = det.cls
+            # obj.probability = det.conf
+            # obj.is_grounded = False
+            # output.append(obj)
+
+            for box in det.xyxy[0]:
+                detect_point, conf, bbox_center_point, object_class = get_detect_point_with_conf(box, label)
+                if detect_point is None:
+                    continue
+                if poly_path.contains_point(detect_point) and conf > DETECTION_CONF_THRESHOLD:
+                    _, point_cloud_value = point_cloud.get_value( bbox_center_point[0], 
+                                                                bbox_center_point[1])
+                    depth = get_distance_point_cloud(point_cloud_value)
+                    if not np.isnan(depth) and not np.isinf(depth):
+                        draw_object_distance(img_data_seq, depth, bbox_center_point)
+                    else:                    
+                        depth = DEPTH
+                        print("Can't estimate distance at this position.")
+                        print("Your camera is probably too close to the scene, please move it backwards.\n")
+                    
+                    depth_list.append(depth)
+                    draw_bbox(img_data_seq, box)
+                    draw_class_conf(img_data_seq, box, object_class, conf) 
 
         if depth_list:  
             depth = min(depth_list)
@@ -289,6 +343,7 @@ def main(device):
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(device)
-    with torch.no_grad():
-        main(device)
+    print(device)    
+    model = load_model(device)
+    print(f"Model loaded: {model}")
+    main(model)
