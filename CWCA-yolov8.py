@@ -2,7 +2,7 @@
 
 import sys
 import numpy as np
-
+import time
 import argparse
 import torch
 import cv2
@@ -14,10 +14,24 @@ from time import sleep
 
 import ogl_viewer.viewer as gl
 import cv_viewer.tracking_viewer as cv_viewer
+import rospy
+from std_msgs.msg import Float32, String
+
+rospy.init_node('perception', anonymous=True)
+
+Flag = rospy.Publisher('collision_warning', Float32, queue_size=1)
 
 lock = Lock()
 run_signal = False
 exit_signal = False
+MAX_CLASS_ID = 7
+
+CLASSES = ['person', 'bicycle', 'car', 'motocycle', 'route board', 
+           'bus', 'commercial vehicle', 'truck', 'traffic sign', 'traffic light',
+            'autorickshaw','stop sign', 'ambulance', 'bench', 'construction vehicle',
+            'animal', 'unmarked speed bump', 'marked speed bump', 'pothole', 'police vehicle',
+            'tractor', 'pushcart', 'temporary traffic barrier', 'rumblestrips', 
+            'traffic cone', 'pedestrian crossing']
 
 def xywh2abcd(xywh, im_shape):
     output = np.zeros((4, 2))
@@ -59,12 +73,9 @@ def get_class_label(det):
 
 def detections_to_custom_box(detections, im0):
     output = []
-    classes = ['__background__', 'person', 'bicycle', 'car', 'motorcycle']
     for i, det in enumerate(detections):
-        
-        cls_num = get_class_label(det.cls)
-        print(f"Det class: {det.cls}, {cls_num}")
-        if cls_num != 1 or cls_num != 2 or cls_num != 3 or cls_num != 4:
+        class_id = int(det.cls)
+        if class_id >= MAX_CLASS_ID:
             continue
         
         xywh = det.xywh[0]
@@ -72,12 +83,11 @@ def detections_to_custom_box(detections, im0):
         # Creating ingestable objects for the ZED SDK
         obj = sl.CustomBoxObjectData()
         obj.bounding_box_2d = xywh2abcd(xywh, im0.shape)
-        obj.label = classes[det.cls]
+        obj.label = class_id
         obj.probability = det.conf
         obj.is_grounded = False
         output.append(obj)
     return output
-
  
 def torch_thread(weights, img_size, conf_thres=0.2, iou_thres=0.45):
     global image_net, exit_signal, run_signal, detections
@@ -99,6 +109,76 @@ def torch_thread(weights, img_size, conf_thres=0.2, iou_thres=0.45):
             run_signal = False
         sleep(0.01)
 
+def draw_bbox(img, object, color):
+    #for object in objects.object_list:
+    xA = int(object.bounding_box_2d[0][0])
+    yA = int(object.bounding_box_2d[0][1])
+    xB = int(object.bounding_box_2d[2][0])
+    yB = int(object.bounding_box_2d[2][1])
+
+    c1, c2 = (xA, yA), (xB, yB) 
+    center_point = round((c1[0] + c2[0]) / 2), round((c1[1] + c2[1]) / 2) ## center of object
+    angle = np.arctan2(object.velocity[0],object.velocity[1])* 180 / np.pi
+    #dist = math.sqrt(object.position[0]*object.position[0] + object.position[1]*object.position[1])
+    #vel = math.sqrt(object.velocity[0]*object.velocity[0] + object.velocity[1]*object.velocity[1])
+
+    cv2.rectangle(img, (xA, yA), (xB, yB), color, 2)
+    cv2.putText(img, str(CLASSES[object.raw_label])+': '+str(round(object.confidence,2)), (xA,yA-5), cv2.FONT_HERSHEY_COMPLEX_SMALL, 2, color, 2)
+    # for each pedestrian show distance and velocity 
+    cv2.putText(img, "D: (" +str(round(object.position[0],2))+","+str(round(object.position[1],2))+")", center_point, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0,255,0), 2)
+    cv2.putText(img, "angle: " +str(round(angle,2)), (center_point[0], center_point[1]+20), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0,255,0), 2)
+    return img
+
+def collision_warning(objects, flag_list, display_resolution, camera_res):
+    global image_net
+    obj_array = objects.object_list
+    print(str(len(obj_array))+" Object(s) detected\n")
+    flag = 0
+    ### when objects present then--->
+    if len(obj_array) > 0:
+        obj_flag = 1
+        ## for each object detected in frame
+        for obj in objects.object_list:             
+            #print(classes[obj.raw_label])            
+            if (obj.tracking_state != sl.OBJECT_TRACKING_STATE.OK) or (not np.isfinite(obj.position[0])) or (
+                    obj.id < 0):
+                continue
+
+            color = (0,255,0)
+            angle = np.arctan2(obj.velocity[0],obj.velocity[1])* 180 / np.pi          
+            
+            
+            if( obj.raw_label<=7 and obj.position[0]<20): ## for person and vehicles
+                # ax.clear()
+                # angle_list.append(angle)
+                # ax.plot(angle_list)
+                # plt.savefig("plot_angle.png")
+                # print(obj.position[0], obj.position[1], angle)
+                if(obj.position[1] > 2 and angle > -170 and angle < -95):
+                    color = (0,128,255)
+                    flag = 1
+                if(obj.position[1] < -2 and angle > -85 and angle < -10 ):
+                    color = (0,128,255)
+                    flag = 1
+                if(abs(obj.position[1]) <= 2 and abs(obj.position[0])<15):
+                    #print("inside")
+                    color = (0,0,255)
+                    flag = 2
+                if(abs(obj.position[1]) <= 2 and abs(obj.position[0])>=15):
+                    color = (0,128,255)
+                    flag = 1
+                image_net = draw_bbox(image_net, obj, color)
+            flag_list.append(flag)
+            #file.write(str(time.time())+","+str(obj.raw_label)+","+str(obj.id)+","+str(flag)+","+str(obj.position[0])+","+str(obj.position[1])+","+str(angle)+","+str(current_vel)+"\n")        
+    else:        
+        print("No object detected")
+        flag_list.append(0)
+        
+    flag_frame = np.max(flag_list)
+    print(flag_list)  
+    print("collision_warning: ",flag_frame)
+    Flag.publish(flag_frame)
+    image_net = cv2.resize(image_net, (700, 500))
 
 def main():
     global image_net, exit_signal, run_signal, detections
@@ -189,6 +269,8 @@ def main():
             lock.release()
             zed.retrieve_objects(objects, obj_runtime_param)
 
+            collision_warning(objects, [0], display_resolution, camera_res)
+
             # -- Display
             # Retrieve display data
             zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA, sl.MEM.CPU, point_cloud_res)
@@ -200,12 +282,14 @@ def main():
             viewer.updateData(point_cloud_render, objects)
             # 2D rendering
             np.copyto(image_left_ocv, image_left.get_data())
+            #image_net_left_ocv = np.full((display_resolution.height, display_resolution.width, 4), [245, 239, 239, 255], np.uint8)
+            #np.copyto(image_net_left_ocv, image_net)
             cv_viewer.render_2D(image_left_ocv, image_scale, objects, obj_param.enable_tracking)
-            global_image = cv2.hconcat([image_left_ocv, image_track_ocv])
+            #global_image = cv2.hconcat([image_net, image_track_ocv])
             # Tracking view
-            track_view_generator.generate_view(objects, cam_w_pose, image_track_ocv, objects.is_tracked)
+            #track_view_generator.generate_view(objects, cam_w_pose, image_track_ocv, objects.is_tracked)
 
-            cv2.imshow("ZED | 2D View and Birds View", global_image)
+            cv2.imshow("ZED | 2D View and Birds View", image_net)
             key = cv2.waitKey(10)
             if key == 27:
                 exit_signal = True
