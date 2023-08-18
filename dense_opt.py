@@ -1,19 +1,25 @@
 import cv2 as cv
 import numpy as np
 import time
+import rospy
+from std_msgs.msg import Float32, String
 
 cap = cv.VideoCapture(0)
 
-# used to record the time when we processed last frame
-prev_frame_time = 0
+# # used to record the time when we processed last frame
+# prev_frame_time = 0
 
-# used to record the time at which we processed current frame
-new_frame_time = 0
-file="data.csv"
-mode="w"
-f = open(file, mode)
-f.write("{0:<10},{1:<10},{2:<20}\n".format("Flow","Magnitude","Decision"))
-threshold = 99999
+# # used to record the time at which we processed current frame
+# new_frame_time = 0
+# file="data.csv"
+# mode="w"
+# f = open(file, mode)
+# f.write("{0:<10},{1:<10},{2:<20}\n".format("Flow","Magnitude","Decision"))
+
+rospy.init_node('perception_back_cam', anonymous=True)
+optical_flow_publish = rospy.Publisher('optical_flow', String, queue_size=1)
+
+CLOSENESS_THRES = 99999
 
 def matrix_mul(mat):
     mat_shap = mat.shape
@@ -44,7 +50,7 @@ if cap.isOpened():
             ret, frame = cap.read()
             # Opens a new window and displays the input
             # frame
-            cv.imshow("input", frame)
+            # cv.imshow("input", frame)
             
             # Converts each frame to grayscale - we previously
             # only converted the first frame to grayscale
@@ -82,18 +88,18 @@ if cap.isOpened():
             
             
             decision = ""
-            if(flow_ < (-1 * threshold)):
+            if(flow_ < (-1 * CLOSENESS_THRES)):
                 decision = "LEFT-SIDE"
-            elif(flow_ > threshold):
+            elif(flow_ > CLOSENESS_THRES):
                 decision = "RIGHT-SIDE"
             else:
-                decision = "SAFE-TO_OVERTAKE"
+                decision = "SAFE-TO-OVERTAKE"
 
-            
-            # putting the FPS count on the frame
-            if minute_count % 60 == 0 :
-                f.write("{0:<10},{1:<10},{2:<20}\n".format(f"{flow_}",f"{magnitude_}",f"{decision}"))
-                minute_count = 0
+            optical_flow_publish.publish(decision)
+            # # putting the FPS count on the frame
+            # if minute_count % 60 == 0 :
+            #     f.write("{0:<10},{1:<10},{2:<20}\n".format(f"{flow_}",f"{magnitude_}",f"{decision}"))
+            #     minute_count = 0
             cv.putText(rgb, decision, (7, 70), font, 1, (100, 255, 0), 1, cv.LINE_AA)
             cv.imshow("dense optical flow", rgb)
             

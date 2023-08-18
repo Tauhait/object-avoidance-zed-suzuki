@@ -17,7 +17,7 @@ from collections import namedtuple
 
 # import segmentation model
 from seg_model.pspnet import PSPNet
-
+from scipy.interpolate import CubicSpline
 from threading import Lock, Thread
 from time import sleep
 
@@ -27,17 +27,26 @@ import rospy
 from std_msgs.msg import Float32, String
 import warnings
 warnings.filterwarnings("ignore")
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 
-rospy.init_node('perception', anonymous=True)
+rospy.init_node('perception_front_cam', anonymous=True)
 
-Flag = rospy.Publisher('collision_warning', Float32, queue_size=1)
+collision_warning_publish = rospy.Publisher('collision_warning', Float32, queue_size=1)
+collision_avoidance_publish = rospy.Publisher('collision_avoidance', String, queue_size=1)
+streering_angle_publish = rospy.Publisher('streering_angle', Float32, queue_size=1)
 
 lock = Lock()
+
+show_plot = True
 run_signal = False
 exit_signal = False
 MAX_CLASS_ID = 7
 MAX_DEPTH = 20
-
+NUM_INTERPOLATED_POINTS = 500
+red_pixels = []
+green_pixels = []
 CLASSES = ['person', 'bicycle', 'car', 'motocycle', 'route board', 
            'bus', 'commercial vehicle', 'truck', 'traffic sign', 'traffic light',
             'autorickshaw','stop sign', 'ambulance', 'bench', 'construction vehicle',
@@ -45,7 +54,7 @@ CLASSES = ['person', 'bicycle', 'car', 'motocycle', 'route board',
             'tractor', 'pushcart', 'temporary traffic barrier', 'rumblestrips', 'traffic cone', 'pedestrian crossing']
 REQ_CLASSES = [0,1,2,3,4,6,7,8,9,10,11,12,13,15,16,17,18,19,20,26]
 PERSONS_VEHICLES_CLASSES = [0,1,2,3,4,6,7,8,11,13,15,20,21]
-
+LANE_SPACE = 5
 Label = namedtuple( "Label", [ "name", "train_id", "color"])
 drivables = [ 
              Label("direct", 0, (0, 255, 0)),        # green
@@ -199,8 +208,7 @@ def collision_warning(objects, flag_list, display_resolution, camera_res, depth_
         ## for each object detected in frame
         for obj in objects.object_list:             
             # print(CLASSES[obj.raw_label])            
-            if (obj.tracking_state != sl.OBJECT_TRACKING_STATE.OK) or (not np.isfinite(obj.position[0])) or (
-                    obj.id < 0):
+            if (obj.tracking_state != sl.OBJECT_TRACKING_STATE.OK) or (not np.isfinite(obj.position[0])) or (obj.id < 0):
                 continue
 
             color = (0,255,0)
@@ -235,10 +243,72 @@ def collision_warning(objects, flag_list, display_resolution, camera_res, depth_
     flag_frame = np.max(flag_list)
     #print(flag_list)  
     # print("Inside collision_warning function::: collision_warning: ",flag_frame)
-    Flag.publish(flag_frame)
+    collision_warning_publish.publish(flag_frame)
+
+def get_green_masked_image(cm_labels):
+    green_mask = (cm_labels[:,:,1] > 0) & (cm_labels[:,:,0] == 0) & (cm_labels[:,:,2] == 0)
+    
+    green_masked_image = np.zeros_like(cm_labels)
+    green_masked_image[green_mask] = cm_labels[green_mask]
+    return green_masked_image, green_mask
+
+def get_red_masked_image(cm_labels):
+    height, width, _ = cm_labels.shape
+    red_mask = (cm_labels[:,:,2] > 0) & (cm_labels[:,:,1] == 0) & (cm_labels[:,:,0] == 0)
+    # Create a mask for the left side of the matrix
+    left_mask = np.zeros((height, width // 2), dtype=bool)
+    # Combine the left mask and the red mask for the right half
+    combined_red_mask = np.hstack((left_mask, red_mask[:, width // 2:]))   
+    red_masked_image = np.zeros_like(cm_labels)
+    red_masked_image[combined_red_mask] = cm_labels[combined_red_mask]
+    return red_masked_image, combined_red_mask
+
+def get_overtake_angle(interpolated_x, interpolated_y):
+    angle_in_deg = []
+    for i in range(len(interpolated_x) - 50):
+        if i % 50 != 0 : 
+            continue
+        x1, y1 = interpolated_x[i], interpolated_y[i]
+        x2, y2 = interpolated_x[i + 50], interpolated_y[i + 50]
+
+        angle_radians = np.arctan2(y2 - y1, x2 - x1)
+        angle_degrees = np.degrees(angle_radians)
+        angle_in_deg.append(angle_degrees)
+    return np.mean(angle_in_deg)
+
+
+def is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image):
+    if driving_lane_space >= 0 and driving_lane_space < LANE_SPACE and overtake_lane_space > LANE_SPACE:
+        green_midpoint = np.mean(np.where(green_masked_image), axis=1)
+        red_midpoint = np.mean(np.where(red_masked_image), axis=1)
+        red_midpoint_x = int(red_midpoint[1])  
+        red_midpoint_y = int(red_midpoint[0]) 
+
+        max_y = masked_image.shape[0] - 1        
+        green_midpoint_x = int(green_midpoint[1])  
+        green_midpoint_y = int(green_midpoint[0])  
+        green_red_midpoint_x = int((red_midpoint_x - green_midpoint_x) / 2)
+        green_red_midpoint_y = int((max_y - red_midpoint_y)/ 2)
+        
+        x_array = np.array([green_midpoint_x, green_midpoint_x + green_red_midpoint_x, red_midpoint_x])
+        y_array = np.array([max_y, red_midpoint_y + green_red_midpoint_y, red_midpoint_y])
+
+        cubic_spline = CubicSpline(x_array, y_array)
+
+        interpolated_x = np.linspace(x_array[0], x_array[-1], NUM_INTERPOLATED_POINTS)
+        interpolated_y = cubic_spline(interpolated_x)
+
+        # Set pixels along the trajectory to white
+        for x, y in zip(interpolated_x, interpolated_y):
+            x = int(x)
+            y = int(y)
+            if 0 <= y < masked_image.shape[0] and 0 <= x < masked_image.shape[1]:
+                masked_image[y, x] = [255, 255, 255]
+        return True, masked_image, get_overtake_angle(interpolated_x, interpolated_y)
+    return False, None, None
 
 def drivespace():
-############################################################################################ PSP NET            
+    global red_pixels, green_pixels, show_plot           
     freespace_frame = cv2.resize(cv2.cvtColor(image_net, cv2.COLOR_RGBA2RGB), (700, 500))
 
     pt_image = preprocess(freespace_frame)
@@ -249,31 +319,37 @@ def drivespace():
     predicted_labels = y_pred.cpu().detach().numpy()
 
     cm_labels = (train_id_to_color[predicted_labels]).astype(np.uint8)
-    green_mask = (cm_labels[:,:,1] > 0) & (cm_labels[:,:,0] == 0) & (cm_labels[:,:,2] == 0)
     
-    green_masked_image = np.zeros_like(cm_labels)
-    green_masked_image[green_mask] = cm_labels[green_mask]
+    green_masked_image, green_mask = get_green_masked_image(cm_labels)
 
     total_pixels = cm_labels.shape[0] * cm_labels.shape[1]
     num_green_pixels = np.sum(green_masked_image)
     normalized_num_green_pixels = num_green_pixels / total_pixels
-    print(f"\n\nTotal green space available in pixels: {normalized_num_green_pixels}\n")
-    height, width, _ = cm_labels.shape
-    red_mask = (cm_labels[:,:,2] > 0) & (cm_labels[:,:,1] == 0) & (cm_labels[:,:,0] == 0)
-    # Create a mask for the left side of the matrix
-    left_mask = np.zeros((height, width // 2), dtype=bool)
-    # Combine the left mask and the red mask for the right half
-    combined_red_mask = np.hstack((left_mask, red_mask[:, width // 2:]))   
-    red_masked_image = np.zeros_like(cm_labels)
-    red_masked_image[combined_red_mask] = cm_labels[combined_red_mask]
+    # print(f"\n\nTotal green space available in pixels: {normalized_num_green_pixels}\n")
+    
+    red_masked_image, combined_red_mask = get_red_masked_image(cm_labels)
     num_red_pixels = np.sum(red_masked_image)
     normalized_num_red_pixels = num_red_pixels / total_pixels
-    print(f"\n\nTotal right red space available in pixels: {normalized_num_red_pixels}\n")
+    # print(f"\n\nTotal right red space available in pixels: {normalized_num_red_pixels}\n")
+    
     combined_mask = green_mask | combined_red_mask
     masked_image = np.zeros_like(cm_labels)
-    masked_image[combined_mask] = cm_labels[combined_mask]     
-    return masked_image
-#########################################################################################################   
+    masked_image[combined_mask] = cm_labels[combined_mask]
+
+    driving_lane_space = int(normalized_num_green_pixels)
+    overtake_lane_space = int(normalized_num_red_pixels)
+
+    # red_pixels.append(overtake_lane_space)
+    # green_pixels.append(driving_lane_space)
+    status, updated_mask, steering_angle = is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image)
+    if status:
+        masked_image = updated_mask
+        collision_avoidance_publish.publish("OVERTAKE")
+        streering_angle_publish.publish(steering_angle)
+    else:
+        collision_avoidance_publish.publish("CONTINUE")
+        streering_angle_publish.publish(0)
+    return masked_image 
 
 def main(device):
     global image_net, exit_signal, run_signal, detections
@@ -284,8 +360,14 @@ def main(device):
     print("Inside main function::: Initializing Camera...")
 
     zed = sl.Camera()
+    zed_serial = zed.get_camera_information().serial_number
+    print(f"Zed serial number: {zed_serial}")
+    print("Inside main function::: zed = sl.Camera() executed...")
 
     input_type = sl.InputType()
+    input_type.set_from_serial_number(zed_serial)
+
+    print("Inside main function::: input_type.set_from_camera_id(1) executed...")
     if opt.svo is not None:
         input_type.set_from_svo_file(opt.svo)
 
@@ -298,10 +380,15 @@ def main(device):
     init_params.depth_maximum_distance = 50
 
     runtime_params = sl.RuntimeParameters()
+
+    print("Inside main function::: runtime_params = sl.RuntimeParameters() executed...")
+    
     status = zed.open(init_params)
 
+    print("Inside main function::: status = zed.open(init_params) executed...")
+
     if status != sl.ERROR_CODE.SUCCESS:
-        # print(repr(status))
+        print(repr(status))
         exit()
 
     image_left_tmp = sl.Mat()
@@ -370,13 +457,9 @@ def main(device):
             overlay_image = drivespace()
             collision_warning(objects, [0], display_resolution, camera_res, depth_map)
             #########################################################################################
-            image_net = cv2.resize(image_net, (700, 500))
-            # print("Inside main function::: image_net shape " + str(image_net.shape))
-            ######################################################################################### get DEPTH center pixel           
+            image_net = cv2.resize(image_net, (700, 500))          
             # -- Display
-            
-   
-            #########################################################################################       
+                  
             # Retrieve display data
             zed.retrieve_measure(point_cloud, sl.MEASURE.XYZRGBA, sl.MEM.CPU, point_cloud_res)
             point_cloud.copy_to(point_cloud_render)
@@ -400,13 +483,14 @@ def main(device):
                 exit_signal = True
         else:
             exit_signal = True
-
+    
     viewer.exit()
     exit_signal = True
     zed.close()
 
 
 if __name__ == '__main__':
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Inside __main__::: " + str(device))
     parser = argparse.ArgumentParser()
@@ -424,6 +508,8 @@ if __name__ == '__main__':
     pretrained_weights = torch.load(f'PSPNet_res50_20.pt', map_location="cpu")
     PSPNet_model.load_state_dict(pretrained_weights)
     PSPNet_model.eval()
+
     print("Inside __main__::: PSPNet_model loaded")
     with torch.no_grad():
         main(device)
+
