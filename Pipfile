@@ -8,6 +8,8 @@ matplotlib = "*"
 pandas = "*"
 basemap = "*"
 numpy = "*"
+pygame = "*"
+scikit-learn = "*"
 
 [dev-packages]
 

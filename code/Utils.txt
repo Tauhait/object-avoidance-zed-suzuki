@@ -1,0 +1,124 @@
+ pseudo type documentation
+import statements...
+
+# Function to calculate the steering output for lane change
+# Equations: target_bearing, bearing_diff
+# Decisions: target_bearing < 0, bearing_diff < -180, bearing_diff > 180
+def calculate_steer_output_change_lane(currentLocation, targetLocation, current_bearing, heading):
+    steer_output = const.STEER_GAIN * np.arctan(-1 * 2 * 3.5 * np.sin(np.radians(bearing_diff)) / 8)
+    return steer_output, bearing_diff
+
+# Function to determine the speed based on various conditions
+# Decisions: abs(bearing_diff) > const.TURN_BEARNG_THRESHOLD, collision_warning == const.URGENT_WARNING
+def get_speed(collision_warning, lane_state, bearing_diff):
+    return const_speed
+
+# Function to generate a random value within a range
+def randomise():
+    random_value = random.uniform(2.5, 3.5)
+    return random_value
+
+# Function to convert bounding box format
+# Equations: coordinates conversion
+def xywh2abcd(xywh, im_shape):
+    return output
+
+# Function to extract the class label from a detection
+def get_class_label(det):
+    return number
+
+# Function to calculate the angle between horizontal base and object center
+# Equations: angle calculation
+def get_angle_between_horizontal_base_object_center(x1, x2, x3, x4, y1, y2, y3, y4):
+    return angle_deg
+
+# Function to extract the green masked image
+# Decision: green_mask
+def get_green_masked_image(cm_labels):
+    green_masked_image = np.zeros_like(cm_labels)
+    green_masked_image[green_mask] = cm_labels[green_mask]
+    return green_masked_image, green_mask
+
+# Function to extract the left red pixels
+# Decision: red_mask
+def get_left_red_pixels(cm_labels):
+    left_red_masked_image = np.zeros_like(cm_labels)
+    left_red_masked_image[combined_red_mask] = cm_labels[combined_red_mask]
+    return left_red_masked_image, combined_red_mask
+
+# Function to extract the right red pixels
+# Decision: red_mask
+def get_right_red_pixels(cm_labels):
+    red_masked_image = np.zeros_like(cm_labels)
+    red_masked_image[combined_red_mask] = cm_labels[combined_red_mask]
+    return red_masked_image, combined_red_mask
+
+# Function to calculate the bearing based on the hypotenuse
+# Decision: hyp >= base
+def get_bearing(hyp, base=1.6):
+    return bearing
+
+# Function to calculate the new point based on distance and bearing
+# Equations: point calculation
+def get_point_at_distance(lat, lon, d, bearing, R=6371):
+    return degrees(lat2), degrees(lon2)
+
+# Function to get the depth value of an object
+# Decision: center_depth not in [np.nan, np.inf, -np.inf]
+def get_object_depth_val(x, y, depth_map):
+    return center_depth
+
+# Function to generate a trajectory based on mask images and depth map
+# Decision: dist_to_free_lane_mid == None or np.isnan(dist_to_free_lane_mid) or dist_to_free_lane_mid > 5
+def gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map):
+    return status, masked_image, dist_to_free_lane_mid
+
+# Function to check if it is clear to overtake
+# Decisions: driving_lane_space >= 0 and driving_lane_space < const.LANE_SPACE and overtake_lane_space > const.LANE_SPACE
+def is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map):
+    return status, masked_image, dist_to_free_lane_mid
+
+# Function to set the angle based on delta angle
+# Equations: angle setting
+def set_angle(m_nAngle, deltaAngle):
+    return H_Angle, L_Angle
+
+# Function to calculate the checksum of a message
+# Equations: checksum calculation
+def calc_checksum(msg):
+    return cs
+
+# Function to set the speed based on a given value
+# Equations: speed setting
+def set_speed(speed):
+    return H_speed, L_speed
+
+# Function to generate a message for the controller
+# Equations: message generation
+# Decisions: angle > 90
+def get_msg_to_mabx(speed, m_nAngle, angle, flasher, counter):
+    return message
+
+# Function to determine the flasher state based on the angle
+def get_flasher(angle):
+    return flasher
+
+# Function to check if the target has been reached
+# Decision: distance_to_target < const.TARGET_REACH
+def has_reached(current_loc, target_loc):
+    return distance_to_target < const.TARGET_REACH
+
+# Function to get the next overtake waypoint
+# Equations: waypoint calculation
+def get_next_overtake_waypoint(lat, lon):
+    return get_point_at_distance(lat, lon, const.OVERTAKE_WAYPOINT_DIST, const.BEARING_ZERO)
+
+# Function to check if it is clear to switch lanes
+# Decision: overtake_lane_space > 2 * const.LANE_SPACE
+def is_clear_to_switch(overtake_lane_space):
+    return overtake_lane_space > 2 * const.LANE_SPACE
+
+# Function to extract coordinates from a file
+# Equations: extracting coordinates from file
+def get_coordinates(file_path):
+    return coordinates_list
