@@ -61,6 +61,11 @@ def callback_latlong(data):
     
 rospy.Subscriber("/novatel/oem7/bestpos",BESTPOS, callback_latlong)
 
+
+def randomise():
+    random_value = random.uniform(2.5, 3.5)
+    return random_value
+
 def detections_to_custom_box(detections, im0):
     output = []
     for i, det in enumerate(detections):
@@ -100,6 +105,13 @@ def torch_thread(weights, img_size, device, conf_thres=0.2, iou_thres=0.45):
             run_signal = False
         sleep(0.01)
 
+def get_object_depth_val(x, y, depth_map):
+    _, center_depth = depth_map.get_value(x, y, sl.MEM.CPU)
+    if center_depth not in [np.nan, np.inf, -np.inf]:
+        # print(f"Depth value at center: {center_depth} metres.")  
+        return center_depth
+    return None
+
 def draw_bbox(object, color, depth_map):
     global image_net
     #for object in objects.object_list:
@@ -117,7 +129,7 @@ def draw_bbox(object, color, depth_map):
     #dist = math.sqrt(object.position[0]*object.position[0] + object.position[1]*object.position[1])
     #vel = math.sqrt(object.velocity[0]*object.velocity[0] + object.velocity[1]*object.velocity[1])
 
-    depth = util.get_object_depth_val(center_point[0], center_point[1], depth_map)
+    depth = get_object_depth_val(center_point[0], center_point[1], depth_map)
     cv2.line(image_net, (h_x, h_y), (center_point[0], center_point[1]), color, 1)
     # cv2.line(image_net, (image_net.shape[1], image_net.shape[0]), (center_point[0], center_point[1]), color, 1)
     cv2.rectangle(image_net, (xA, yA), (xB, yB), color, 2)
@@ -131,6 +143,67 @@ def draw_bbox(object, color, depth_map):
         cv2.putText(image_net, "depth: " +str(round(depth,2)) + " m", center_point, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0,255,0), 2)
     
     #return img
+
+def gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map):
+    try:
+        green_midpoint = np.mean(np.where(green_masked_image), axis=1)
+        red_midpoint = np.mean(np.where(red_masked_image), axis=1)
+        # print(f"green_midpoint = {green_midpoint},\n red_midpoint = {red_midpoint}")
+
+        if(not np.isnan(red_midpoint[0]) and not np.isnan(red_midpoint[1]) and not np.isnan(green_midpoint[1]) and not np.isnan(green_midpoint[0])):
+            red_midpoint_x = int(red_midpoint[1])  
+            red_midpoint_y = int(red_midpoint[0])
+            # print(f"red_midpoint_x = {red_midpoint_x},\n red_midpoint_y = {red_midpoint_y}")
+            # dist_to_free_lane_mid = get_object_depth_val(red_midpoint_x, red_midpoint_y, depth_map)
+            max_y = masked_image.shape[0] - 1
+            green_midpoint_x = int(green_midpoint[1])
+            green_midpoint_y = int(green_midpoint[0])
+            # print(f"green_midpoint_x = {green_midpoint_x},\n green_midpoint_y = {green_midpoint_y}")
+
+            green_red_midpoint_x = int((red_midpoint_x - green_midpoint_x) / 2)
+            green_red_midpoint_y = int((max_y - red_midpoint_y)/ 2)
+
+            # print(f"green_red_midpoint_x = {green_red_midpoint_x},\n green_red_midpoint_y = {green_red_midpoint_y}")
+
+            x_array = np.array([green_midpoint_x, green_midpoint_x + green_red_midpoint_x, red_midpoint_x])
+            y_array = np.array([max_y, red_midpoint_y + green_red_midpoint_y, red_midpoint_y])
+
+            cubic_spline = CubicSpline(x_array, y_array)
+
+            interpolated_x = np.linspace(x_array[0], x_array[-1], const.NUM_INTERPOLATED_POINTS)
+            interpolated_y = cubic_spline(interpolated_x)
+
+            # print(f"interpolated_x = {interpolated_x}, interpolated_y = {interpolated_y}")
+
+            dist_to_free_lane_mid = get_object_depth_val(red_midpoint_x, red_midpoint_y, depth_map)
+
+            # print(f"get_object_depth_val = {dist_to_free_lane_mid}")
+            if dist_to_free_lane_mid == None or np.isnan(dist_to_free_lane_mid) or dist_to_free_lane_mid > 5:
+                dist_to_free_lane_mid = randomise()
+            
+            # print(f"dist_to_free_lane_mid = {dist_to_free_lane_mid}")
+            # Set pixels along the trajectory to white
+            for x, y in zip(interpolated_x, interpolated_y):
+                x = int(x)
+                y = int(y)
+                if 0 <= y < masked_image.shape[0] and 0 <= x < masked_image.shape[1]:
+                    masked_image[y, x] = [255, 255, 255]
+            return True, masked_image, dist_to_free_lane_mid
+    except Exception as e:
+        print(f"Exception occured : {e}, {type(e).__name__}")
+    print(f"Return False from is_clear_to_overtake")
+    return False, None, None
+
+def is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map):
+    if driving_lane_space >= 0 and driving_lane_space < const.LANE_SPACE and overtake_lane_space > const.LANE_SPACE:
+        status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
+        while status is False or masked_image is None or dist_to_free_lane_mid is None:
+            # print(f"status = {status}")
+            if masked_image is None:
+                print(f"masked image  is None")
+            status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
+        return status, masked_image, dist_to_free_lane_mid    
+    return False, None, None
 
 def collision_warning(objects, warning_list, display_resolution, camera_res, depth_map):
     global image_net
@@ -168,6 +241,7 @@ def drivespace(depth_map):
     global red_pixels, green_pixels, show_plot, lane_state   
     freespace_frame = cv2.resize(cv2.cvtColor(image_net, cv2.COLOR_RGBA2RGB), (700, 500))
 
+    # print(f"Inside Drivespace")
     pt_image = preprocess(freespace_frame)
     pt_image = pt_image.to(device)
 
@@ -193,18 +267,26 @@ def drivespace(depth_map):
         overtake_lane_space = int(normalized_num_red_pixels)
         masked_image[combined_mask] = cm_labels[combined_mask]
 
-        status, updated_mask, dist_to_free_lane_mid = util.is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map)
+        # print(
+        #     f"driving_lane_space = {driving_lane_space}\n"
+        #     f"overtake_lane_space = {overtake_lane_space}")
+        status, updated_mask, dist_to_free_lane_mid = is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map)
         if status == False or dist_to_free_lane_mid == None or np.isnan(dist_to_free_lane_mid):
+            # print(f"Status = {status}, dist_to_free_lane_mid = {dist_to_free_lane_mid}")
             collision_avoidance_publish.publish(const.CONTINUE)
             overtake_lat_lon_publish.publish('0,0,0')
         else:
-            print(f"dist_to_free_lane_mid: {dist_to_free_lane_mid}")
+            # print(f"dist_to_free_lane_mid: {dist_to_free_lane_mid}")
             masked_image = updated_mask
             overtake_bearing = util.get_bearing(dist_to_free_lane_mid)
             overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
             collision_avoidance_publish.publish(const.OVERTAKE)
             overtake_lat_lon_publish.publish(f'{str(dist_to_free_lane_mid)},{str(overtake_x)},{str(overtake_y)}')
+            lane_state = const.CHANGE_LANE
+            lane_state_publish.publish(const.CHANGE_LANE)
+
     elif lane_state == const.OVERTAKE_LANE:
+        # print(f"overtake_lane_space = {overtake_lane_space}")
         red_masked_image, combined_red_mask = util.get_left_red_pixels(cm_labels)
         num_red_pixels = np.sum(red_masked_image)
         normalized_num_red_pixels = num_red_pixels / total_pixels
@@ -213,9 +295,20 @@ def drivespace(depth_map):
         masked_image[combined_mask] = cm_labels[combined_mask]
         if util.is_clear_to_switch(overtake_lane_space):
             collision_avoidance_publish.publish(const.CONTINUE)
+            lane_state = const.DRIVING_LANE
             lane_state_publish.publish(const.DRIVING_LANE)
-
-    
+    else:
+        right_red_masked_image, combined_right_red_mask = util.get_right_red_pixels(cm_labels)
+        left_red_masked_image, left_combined_red_mask = util.get_left_red_pixels(cm_labels)
+        combined_mask = green_mask | combined_right_red_mask | left_combined_red_mask
+        
+        masked_image[combined_mask] = cm_labels[combined_mask]
+        status, updated_mask, dist_to_free_lane_mid = gen_trajectory(green_masked_image, right_red_masked_image, masked_image, depth_map)
+        masked_image = updated_mask
+        overtake_bearing = util.get_bearing(dist_to_free_lane_mid)
+        overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
+        overtake_lat_lon_publish.publish(f'{str(dist_to_free_lane_mid)},{str(overtake_x)},{str(overtake_y)}')
+        print(f"@@@@ Lane State = {const.STATE_DICT[lane_state]}")
     return masked_image 
 
 def main(device):
@@ -236,7 +329,7 @@ def main(device):
     init_params = sl.InitParameters(input_t=input_type, svo_real_time_mode=True)
     init_params.camera_resolution = sl.RESOLUTION.HD720
     init_params.coordinate_units = sl.UNIT.METER
-    init_params.depth_mode = sl.DEPTH_MODE.ULTRA  # QUALITY
+    init_params.depth_mode = sl.DEPTH_MODE.NEURAL  # QUALITY
     init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
     init_params.depth_maximum_distance = 50
 
