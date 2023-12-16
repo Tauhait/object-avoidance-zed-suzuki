@@ -195,13 +195,15 @@ def gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map
     return False, None, None
 
 def is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map):
+    # masked_image_copy = masked_image
     if driving_lane_space >= 0 and driving_lane_space < const.DRIVING_LANE_SPACE and overtake_lane_space > const.OVERTAKE_LANE_SPACE:
         status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
-        while status is False or masked_image is None or dist_to_free_lane_mid is None:
-            # print(f"status = {status}")
-            if masked_image is None:
-                print(f"masked image  is None")
-            status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
+        # while status is False or masked_image is None or dist_to_free_lane_mid is None:
+        #     # print(f"status = {status}")
+        #     if masked_image is None:
+        #         print(f"masked image  is None")
+        #     masked_image = masked_image_copy
+        #     status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
         return status, masked_image, dist_to_free_lane_mid    
     return False, None, None
 
@@ -282,8 +284,8 @@ def drivespace(depth_map):
             overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
             collision_avoidance_publish.publish(const.OVERTAKE)
             overtake_lat_lon_publish.publish(f'{str(dist_to_free_lane_mid)},{str(overtake_x)},{str(overtake_y)}')
-            lane_state = const.CHANGE_LANE
-            lane_state_publish.publish(const.CHANGE_LANE)
+            # lane_state = const.CHANGE_LANE
+            # lane_state_publish.publish(const.CHANGE_LANE)
 
     elif lane_state == const.OVERTAKE_LANE:
         print(f"overtake_lane_space = {overtake_lane_space}")
@@ -296,8 +298,8 @@ def drivespace(depth_map):
         if util.is_clear_to_switch(overtake_lane_space):
             print(f"Clear to Switch")
             collision_avoidance_publish.publish(const.CONTINUE)
-            lane_state = const.DRIVING_LANE
-            lane_state_publish.publish(const.DRIVING_LANE)
+            # lane_state = const.DRIVING_LANE
+            # lane_state_publish.publish(const.DRIVING_LANE)
     else:
         right_red_masked_image, combined_right_red_mask = util.get_right_red_pixels(cm_labels)
         left_red_masked_image, left_combined_red_mask = util.get_left_red_pixels(cm_labels)
@@ -313,8 +315,8 @@ def drivespace(depth_map):
             overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
             overtake_lat_lon_publish.publish(f'{str(dist_to_free_lane_mid)},{str(overtake_x)},{str(overtake_y)}')
             print(f"@@@@ Lane State = {const.STATE_DICT[lane_state]}")
-            lane_state = const.OVERTAKE_LANE
-            lane_state_publish.publish(lane_state)
+            # lane_state = const.OVERTAKE_LANE
+            # lane_state_publish.publish(lane_state)
     return masked_image 
 
 def main(device):

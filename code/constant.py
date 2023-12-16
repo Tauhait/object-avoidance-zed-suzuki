@@ -2,7 +2,7 @@ from collections import namedtuple
 
 # SPEED VALUES
 BRAKE_SPEED = 0
-TOP_SPEED = 12
+TOP_SPEED = 8
 # SPEED VALUES
 
 # MABX CONFIG
@@ -11,11 +11,12 @@ MABX_PORT = 30000  # Mabx port for sending from Pegasus
 BUFFER_SIZE = 4096  # packet size
 LOCAL_INTERFACE = 'eno1'
 NAVIGATION_DATA = 'data.csv'
-WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_2023-10-06-12:54:39.txt'
+WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_2023-12-15-16:49:05.txt'
+OVERTAKE_WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/overtake_waypoints_2023-12-15-16:52:40.txt'
 # MABX CONFIG
 
 # NAVIGATION
-STEER_GAIN = 1200          # For Tight Turns 1200 can be used
+STEER_GAIN = 750          # For Tight Turns 1200 can be used
 TURN_BEARNG_THRESHOLD = 6
 # Conversion factor for latitude and longitude to meters
 LAT_LNG_TO_METER = 1.111395e5
@@ -33,11 +34,16 @@ CLASSES = ['person', 'bicycle', 'car', 'motocycle', 'route board',
             'animal', 'unmarked speed bump', 'marked speed bump', 'pothole', 'police vehicle',
             'tractor', 'pushcart', 'temporary traffic barrier', 'rumblestrips', 'traffic cone', 'pedestrian crossing']
 REQ_CLASSES = [0,1,2,3,4,6,7,8,9,10,11,12,13,15,16,17,18,19,20,26]
-PERSONS_VEHICLES_CLASSES = [0,1,2,3,4,6,7,8,11,13,15,20,21]
-LANE_SPACE = 5
+# PERSONS_VEHICLES_CLASSES = [0,1,2,3,4,6,7,8,11,13,15,20,21]
+PERSONS_VEHICLES_CLASSES = [0,1,2,3,6,7]
+DRIVING_LANE_SPACE = 10
+OVERTAKE_LANE_SPACE = 5
 NUM_INTERPOLATED_POINTS = 500
 LEFT_RIGHT_DISTANCE = 1.6		#in meteres in either side
+# STOP_DISTANCE = 3		#in meteres in front of car     #actual 5.5
+# STOP_DISTANCE = 10		#in meteres in front of car     #actual 5.5
 STOP_DISTANCE = 10		#in meteres in front of car     #actual 5.5
+
 DETECTING_DISTANCE = 20     #
 CAUTION_DISTANCE = 15 
 CLOSENESS_THRES = 99999
@@ -55,13 +61,15 @@ DRIVABLES = [
 # OVERTAKE PATH CONFIG
 TARGET_REACH = 1
 BEARING_ZERO = 0
-OVERTAKE_WAYPOINT_DIST = 2
+# OVERTAKE_WAYPOINT_DIST = 2
+OVERTAKE_WAYPOINT_DIST = 4
 WAIT_TIME = 2000
 # OVERTAKE PATH CONFIG
 
 # LANE VELOCITY
 DRIVE_SPEED = 8
 CHANGE_SPEED = 4
+# CHANGE_SPEED = 8
 OVERTAKE_SPEED = 6
 # LANE VELOCITY
 
@@ -105,6 +113,10 @@ STATE_DICT = {
     401: "SAFE_TO_OVERTAKE",
     402: "TRAFFIC_FROM_RIGHT",
 }
+
+DECISION_THRESHOLD = 15
+
+ZERO_STEET_OUTPUT = 0
 
 
 

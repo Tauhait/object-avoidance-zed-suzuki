@@ -35,9 +35,10 @@ def calculate_steer_output_change_lane(currentLocation, targetLocation, current_
     return steer_output, bearing_diff
 
 def get_speed(collision_warning, lane_state, bearing_diff):
-    # print("Inside get_speed")
+    print("Inside get_speed(collision_warning, lane_state, bearing_diff) method")
     const_speed = const.DRIVE_SPEED
     if lane_state == const.DRIVING_LANE:
+        print(f"Bearing Diff = {bearing_diff}")
         if abs(bearing_diff) > const.TURN_BEARNG_THRESHOLD:
             print(f"bearing diff > turn bearing threshold")
             if(collision_warning == const.URGENT_WARNING):
@@ -52,13 +53,15 @@ def get_speed(collision_warning, lane_state, bearing_diff):
         if collision_warning == const.URGENT_WARNING:
             const_speed = const.BRAKE_SPEED
         else:
-            const_speed = const.CHANGE_SPEED
+            const_speed = const.CHANGE_SPEED 
+        # const_speed = const.CHANGE_SPEED 
     else:
         if collision_warning == const.URGENT_WARNING:
             const_speed = const.BRAKE_SPEED
         else:
             const_speed = const.OVERTAKE_SPEED
 
+    print(f"Inside get_speed(collision_warning, lane_state, bearing_diff) const_speed = {const_speed}")
     return const_speed
     
 def randomise():
@@ -149,13 +152,15 @@ def get_right_red_pixels(cm_labels):
     red_masked_image[combined_red_mask] = cm_labels[combined_red_mask]
     return red_masked_image, combined_red_mask
 
-
 def get_bearing(hyp, base=1.6):
+    if hyp is None:
+        return 0
     bearing = 0
     if hyp >= base:
         perp = math.sqrt(hyp**2 - base**2)
         bearing = math.atan(perp / base)
     return 90 - math.degrees(bearing)
+
 
 def get_point_at_distance(lat, lon, d, bearing, R=6371):
     """
@@ -167,6 +172,8 @@ def get_point_at_distance(lat, lon, d, bearing, R=6371):
 
     Returns new lat/lon coordinate {d}km from initial, in degrees
     """
+    if d is None:
+        return degrees(0), degrees(0)
     d = d / 1000
     lat1 = radians(lat)
     lon1 = radians(lon)
@@ -176,56 +183,10 @@ def get_point_at_distance(lat, lon, d, bearing, R=6371):
         sin(a) * sin(d/R) * cos(lat1),
         cos(d/R) - sin(lat1) * sin(lat2)
     )
+    print(f"degrees(lat2) = {degrees(lat2)}, degrees(lon2) = {degrees(lon2)}")
     return degrees(lat2), degrees(lon2)
 
-def get_object_depth_val(x, y, depth_map):
-    _, center_depth = depth_map.get_value(x, y, sl.MEM.CPU)
-    if center_depth not in [np.nan, np.inf, -np.inf]:
-        # print(f"Depth value at center: {center_depth} metres.")  
-        return center_depth
-    return None
 
-def gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map):
-    try:
-        green_midpoint = np.mean(np.where(green_masked_image), axis=1)
-        red_midpoint = np.mean(np.where(red_masked_image), axis=1)
-        if(not np.isnan(red_midpoint[0]) and not np.isnan(red_midpoint[1]) and not np.isnan(green_midpoint[1]) and not np.isnan(green_midpoint[0])):
-            red_midpoint_x = int(red_midpoint[1])  
-            red_midpoint_y = int(red_midpoint[0]) 
-            # dist_to_free_lane_mid = get_object_depth_val(red_midpoint_x, red_midpoint_y, depth_map)
-            max_y = masked_image.shape[0] - 1
-            green_midpoint_x = int(green_midpoint[1])
-            green_midpoint_y = int(green_midpoint[0])
-            green_red_midpoint_x = int((red_midpoint_x - green_midpoint_x) / 2)
-            green_red_midpoint_y = int((max_y - red_midpoint_y)/ 2)
-        
-            x_array = np.array([green_midpoint_x, green_midpoint_x + green_red_midpoint_x, red_midpoint_x])
-            y_array = np.array([max_y, red_midpoint_y + green_red_midpoint_y, red_midpoint_y])
-
-            cubic_spline = CubicSpline(x_array, y_array)
-
-            interpolated_x = np.linspace(x_array[0], x_array[-1], const.NUM_INTERPOLATED_POINTS)
-            interpolated_y = cubic_spline(interpolated_x)
-            dist_to_free_lane_mid = get_object_depth_val(red_midpoint_x, red_midpoint_y, depth_map)
-            if dist_to_free_lane_mid == None or np.isnan(dist_to_free_lane_mid) or dist_to_free_lane_mid > 5:
-                dist_to_free_lane_mid = randomise()
-            # Set pixels along the trajectory to white
-            for x, y in zip(interpolated_x, interpolated_y):
-                x = int(x)
-                y = int(y)
-                if 0 <= y < masked_image.shape[0] and 0 <= x < masked_image.shape[1]:
-                    masked_image[y, x] = [255, 255, 255]
-            return True, masked_image, dist_to_free_lane_mid
-    except Exception as e:
-        print(f"Exception occured : {e}, {type(e).__name__}")
-    print(f"Return False from is_clear_to_overtake")
-    return False, None, None
-
-def is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map):
-    if driving_lane_space >= 0 and driving_lane_space < const.LANE_SPACE and overtake_lane_space > const.LANE_SPACE:
-        status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
-        return status, masked_image, dist_to_free_lane_mid    
-    return False, None, None
 
 def set_angle(m_nAngle, deltaAngle):
     m_nAngle = m_nAngle + deltaAngle
@@ -262,9 +223,9 @@ def get_msg_to_mabx(speed, m_nAngle, angle, flasher, counter):
 
     msg_list[2] = calc_checksum(msg_list)
     message = bytearray(msg_list)
-    print("Speed: ", message[8], message[9])
-    print("Angle: ", message[10], message[11])
-    print("===============================================================================")
+    #print("Speed: ", message[8], message[9])
+    #print("Angle: ", message[10], message[11])
+    #print("===============================================================================")
     return message
 
 def get_flasher(angle):
@@ -278,7 +239,7 @@ def get_next_overtake_waypoint(lat, lon):
     return get_point_at_distance(lat, lon, const.OVERTAKE_WAYPOINT_DIST, const.BEARING_ZERO)
 
 def is_clear_to_switch(overtake_lane_space):
-    return overtake_lane_space > 2 * const.LANE_SPACE
+    return overtake_lane_space > 2 * const.OVERTAKE_LANE_SPACE
 
 def get_coordinates(file_path):
     coordinates_list = []
