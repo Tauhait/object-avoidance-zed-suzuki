@@ -11,8 +11,19 @@ MABX_PORT = 30000  # Mabx port for sending from Pegasus
 BUFFER_SIZE = 4096  # packet size
 LOCAL_INTERFACE = 'eno1'
 NAVIGATION_DATA = 'data.csv'
-WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_2023-12-15-16:49:05.txt'
-OVERTAKE_WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/overtake_waypoints_2023-12-15-16:52:40.txt'
+
+# WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_navigation_20_12.txt'
+
+
+# WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_2023-12-23.txt'
+
+WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_2023-12-23-11:50:23.txt'
+
+#WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints-22-12.txt'
+
+# WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/waypoints_2023-12-22-16:36:50.txt'
+
+# OVERTAKE_WAYPOINT_FILENAME = '/usr/local/zed/samples/object-avoidance-zed-suzuki/overtake_waypoints_2023-12-15-16:52:40.txt'
 # MABX CONFIG
 
 # NAVIGATION
@@ -28,14 +39,21 @@ RAD_TO_DEG_CONVERSION = 57.2957795
 MAX_CLASS_ID = 7
 MAX_DEPTH = 20
 NUM_INTERPOLATED_POINTS = 500
-CLASSES = ['person', 'bicycle', 'car', 'motocycle', 'route board', 
-           'bus', 'commercial vehicle', 'truck', 'traffic sign', 'traffic light',
-            'autorickshaw','stop sign', 'ambulance', 'bench', 'construction vehicle',
-            'animal', 'unmarked speed bump', 'marked speed bump', 'pothole', 'police vehicle',
-            'tractor', 'pushcart', 'temporary traffic barrier', 'rumblestrips', 'traffic cone', 'pedestrian crossing']
-REQ_CLASSES = [0,1,2,3,4,6,7,8,9,10,11,12,13,15,16,17,18,19,20,26]
+
+OBJ_CLASS_CAR = 2
+OBJ_CLASS_CYCLE = 1
+EXTEND_WAYPOINTS_LONG_OBS = 3
+
+CLASSES = [ 'person', 'bicycle', 'car', 'motocycle', 'route board',                             #5
+            'bus', 'commercial vehicle', 'truck', 'traffic sign', 'traffic light',              #5
+            'autorickshaw','stop sign', 'ambulance', 'bench', 'construction vehicle',           #5
+            'animal', 'unmarked speed bump', 'marked speed bump', 'pothole', 'police vehicle',  #5
+            'tractor', 'pushcart', 'temporary traffic barrier', 'rumblestrips', 'traffic cone', #5
+            'pedestrian crossing']
+
+REQ_CLASSES = [0,1,2,3,4,6,7,8,9,10,11,12,13,15,16,17,18,19,20,25,26]
 # PERSONS_VEHICLES_CLASSES = [0,1,2,3,4,6,7,8,11,13,15,20,21]
-PERSONS_VEHICLES_CLASSES = [0,1,2,3,6,7]
+PERSONS_VEHICLES_CLASSES = [0,1,2,3,6,7,25]
 DRIVING_LANE_SPACE = 10
 OVERTAKE_LANE_SPACE = 5
 NUM_INTERPOLATED_POINTS = 500
@@ -61,16 +79,16 @@ DRIVABLES = [
 # OVERTAKE PATH CONFIG
 TARGET_REACH = 1
 BEARING_ZERO = 0
-# OVERTAKE_WAYPOINT_DIST = 2
+
 OVERTAKE_WAYPOINT_DIST = 4
 WAIT_TIME = 2000
 # OVERTAKE PATH CONFIG
 
 # LANE VELOCITY
-DRIVE_SPEED = 8
+DRIVE_SPEED = 10
 CHANGE_SPEED = 4
 # CHANGE_SPEED = 8
-OVERTAKE_SPEED = 6
+OVERTAKE_SPEED = 5
 # LANE VELOCITY
 
 ## STATES
@@ -118,6 +136,45 @@ DECISION_THRESHOLD = 15
 
 ZERO_STEET_OUTPUT = 0
 
+# OBS_LAT = 17.602051094458595
+# OBS_LON = 78.12708143925757
+global OBS_LAT, OBS_LON
+
+OBS_LAT = 17.602029105524696 
+OBS_LON = 78.12708292791199
+
+FILENAME_TRAIL = f"TRAIL_OF_WAYPOINTS_GEN.txt"
+
+# Set sleep interval and lookahead distance
+SLEEP_INTERVAL = 100            # CHANGED FROM 5 TO 100
+LOOK_AHEAD_DISTANCE = 3
+LOOK_AHEAD_DISTANCE_DURING_OVERTAKE = 6
+OVERTAKE_LOOK_AHEAD_DISTANCE = 3
+TURNING_FACTOR = 0.6
+
+NO_INDICATOR = 0
+LEFT_INDICATOR = 1
+RIGHT_INDICATOR = 2
+BOTH_INDICATOR = 3
+
+BEARING_DIFF_THRESHOLD = 5
+
+SPEED_REDUCTION_FACTOR = 0.8
+
+
+DISTANCE_PED =  [0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.0005]
+BEARING_PED  =  [50.24 , 18.24, 21.24, 5.24,  5.24, 5.24, 5.24, 5.24]
+
+DISTANCE_CYCLE =  [0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.0005]
+BEARING_CYCLE  =  [50.24 , 18.24, 21.24, 21.24, 5.24,  5.24, 5.24, 5.24]
+
+DISTANCE_CAR =  [0.002,  0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.001, 0.002, 0.001, 0.0005]
+BEARING_CAR  =  [50.24 , 18.24,   21.24,  5.24,  5.24,  5.24,  5.24,  5.24,  5.24,  5.24,  5.24,  5.24,  5.24,  5.24, 5.24]
 
 
 
+def set_dynamic_obstacle(_lat, _lon):
+    global OBS_LAT, OBS_LON
+    print(f"OBS_LAT = {OBS_LAT} OBS_LON = {OBS_LON}")
+    OBS_LAT = _lat
+    OBS_LON = _lon

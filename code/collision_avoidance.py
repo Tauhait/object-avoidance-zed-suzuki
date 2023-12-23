@@ -37,8 +37,7 @@ global lat, lon, lane_state
 
 collision_warning_publish = rospy.Publisher('collision_warning', Int32, queue_size=1)
 collision_avoidance_publish = rospy.Publisher('collision_avoidance', Int32, queue_size=1)
-overtake_lat_lon_publish = rospy.Publisher('overtake_lat_lon', String, queue_size=1)
-lane_state_publish = rospy.Publisher('lane_state', Int32, queue_size=1)
+ob_detect_class_publish = rospy.Publisher('ob_detect_class', Int32, queue_size=1)
 
 lock = Lock()
 red_pixels = []
@@ -108,7 +107,6 @@ def torch_thread(weights, img_size, device, conf_thres=0.2, iou_thres=0.45):
 def get_object_depth_val(x, y, depth_map):
     _, center_depth = depth_map.get_value(x, y, sl.MEM.CPU)
     if center_depth not in [np.nan, np.inf, -np.inf]:
-        # print(f"Depth value at center: {center_depth} metres.")  
         return center_depth
     return None
 
@@ -126,23 +124,17 @@ def draw_bbox(object, color, depth_map):
     center_point = round((c1[0] + c2[0]) / 2), round((c1[1] + c2[1]) / 2) ## center of object
     angle = util.get_angle_between_horizontal_base_object_center(h_x, center_point[0], h_x, image_net.shape[1], 
                                                             h_y, center_point[1], h_y, image_net.shape[0])
-    #dist = math.sqrt(object.position[0]*object.position[0] + object.position[1]*object.position[1])
-    #vel = math.sqrt(object.velocity[0]*object.velocity[0] + object.velocity[1]*object.velocity[1])
 
     depth = get_object_depth_val(center_point[0], center_point[1], depth_map)
     cv2.line(image_net, (h_x, h_y), (center_point[0], center_point[1]), color, 1)
-    # cv2.line(image_net, (image_net.shape[1], image_net.shape[0]), (center_point[0], center_point[1]), color, 1)
+
     cv2.rectangle(image_net, (xA, yA), (xB, yB), color, 2)
     cv2.putText(image_net, str(const.CLASSES[object.raw_label])+': '+str(round(object.confidence,1)), (xA,yA-5), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, color, 2)
-    # for each pedestrian show distance and velocity 
-    # print("Inside draw_bbox function::: D: " +str(round(object.position[0],2))+","+str(round(object.position[1],2)))
-    # cv2.putText(image_net, "D: (" +str(round(object.position[0],2))+","+str(round(object.position[1],2))+")", center_point, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0,255,0), 2)
-    # print("Inside draw_bbox function::: angle: " +str(round(angle,2)))
     cv2.putText(image_net, "angle: " +str(round(angle,2)), (center_point[0], center_point[1]+const.MAX_DEPTH), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0,255,0), 2)
     if depth is not None:
         cv2.putText(image_net, "depth: " +str(round(depth,2)) + " m", center_point, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0,255,0), 2)
     
-    #return img
+    return object.raw_label
 
 def gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map):
     try:
@@ -197,11 +189,7 @@ def gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map
 def is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map):
     if driving_lane_space >= 0 and driving_lane_space < const.DRIVING_LANE_SPACE and overtake_lane_space > const.OVERTAKE_LANE_SPACE:
         status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
-        while status is False or masked_image is None or dist_to_free_lane_mid is None:
-            # print(f"status = {status}")
-            if masked_image is None:
-                print(f"masked image  is None")
-            status, masked_image, dist_to_free_lane_mid = gen_trajectory(green_masked_image, red_masked_image, masked_image, depth_map)
+        
         return status, masked_image, dist_to_free_lane_mid    
     return False, None, None
 
@@ -209,6 +197,7 @@ def collision_warning(objects, warning_list, display_resolution, camera_res, dep
     global image_net
     obj_array = objects.object_list
     warning = const.NO_WARNING
+    ob_class = -1
     if len(obj_array) > 0:
         for obj in objects.object_list:
             if (obj.tracking_state != sl.OBJECT_TRACKING_STATE.OK) or (not np.isfinite(obj.position[0])) or (obj.id < 0):
@@ -230,12 +219,13 @@ def collision_warning(objects, warning_list, display_resolution, camera_res, dep
                 if(abs(obj.position[1]) <= const.LEFT_RIGHT_DISTANCE and abs(obj.position[0]) < const.STOP_DISTANCE):
                     color = (0,0,255)
                     warning = const.URGENT_WARNING
-                draw_bbox(obj, color, depth_map)
+                ob_class = draw_bbox(obj, color, depth_map)
             warning_list.append(warning)     
     else:
         warning_list.append(const.NO_WARNING)
 
     collision_warning_publish.publish(np.max(warning_list))
+    ob_detect_class_publish.publish(ob_class)
 
 def drivespace(depth_map):
     global red_pixels, green_pixels, show_plot, lane_state   
@@ -258,6 +248,7 @@ def drivespace(depth_map):
     normalized_num_green_pixels = num_green_pixels / total_pixels
     masked_image = np.zeros_like(cm_labels)
     driving_lane_space = int(normalized_num_green_pixels)
+    overtake_lane_space = 0
     
     if lane_state == const.DRIVING_LANE:
         red_masked_image, combined_red_mask = util.get_right_red_pixels(cm_labels)
@@ -267,38 +258,29 @@ def drivespace(depth_map):
         overtake_lane_space = int(normalized_num_red_pixels)
         masked_image[combined_mask] = cm_labels[combined_mask]
 
-        # print(
-        #     f"driving_lane_space = {driving_lane_space}\n"
-        #     f"overtake_lane_space = {overtake_lane_space}")
         status, updated_mask, dist_to_free_lane_mid = is_clear_to_overtake(driving_lane_space, overtake_lane_space, green_masked_image, red_masked_image, masked_image, depth_map)
         if status == False or dist_to_free_lane_mid == None or np.isnan(dist_to_free_lane_mid):
-            # print(f"Status = {status}, dist_to_free_lane_mid = {dist_to_free_lane_mid}")
-            collision_avoidance_publish.publish(const.CONTINUE)
-            overtake_lat_lon_publish.publish('0,0,0')
+            collision_avoidance_publish.publish(const.OVERTAKE)
         else:
-            # print(f"dist_to_free_lane_mid: {dist_to_free_lane_mid}")
             masked_image = updated_mask
             overtake_bearing = util.get_bearing(dist_to_free_lane_mid)
-            overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
+            # overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
             collision_avoidance_publish.publish(const.OVERTAKE)
-            overtake_lat_lon_publish.publish(f'{str(dist_to_free_lane_mid)},{str(overtake_x)},{str(overtake_y)}')
-            lane_state = const.CHANGE_LANE
-            lane_state_publish.publish(const.CHANGE_LANE)
 
-    elif lane_state == const.OVERTAKE_LANE:
-        print(f"overtake_lane_space = {overtake_lane_space}")
-        red_masked_image, combined_red_mask = util.get_left_red_pixels(cm_labels)
-        num_red_pixels = np.sum(red_masked_image)
-        normalized_num_red_pixels = num_red_pixels / total_pixels
-        combined_mask = green_mask | combined_red_mask
-        overtake_lane_space = int(normalized_num_red_pixels)
-        masked_image[combined_mask] = cm_labels[combined_mask]
-        if util.is_clear_to_switch(overtake_lane_space):
-            print(f"Clear to Switch")
-            collision_avoidance_publish.publish(const.CONTINUE)
-            lane_state = const.DRIVING_LANE
-            lane_state_publish.publish(const.DRIVING_LANE)
+
+    # elif lane_state == const.OVERTAKE_LANE:
+    #     red_masked_image, combined_red_mask = util.get_left_red_pixels(cm_labels)
+    #     num_red_pixels = np.sum(red_masked_image)
+    #     normalized_num_red_pixels = num_red_pixels / total_pixels
+    #     combined_mask = green_mask | combined_red_mask
+    #     overtake_lane_space = int(normalized_num_red_pixels)
+    #     masked_image[combined_mask] = cm_labels[combined_mask]
+    #     if util.is_clear_to_switch(overtake_lane_space):
+    #         print(f"Clear to Switch")
+    #         collision_avoidance_publish.publish(const.CONTINUE)
+
     else:
+        collision_avoidance_publish.publish(const.OVERTAKE)
         right_red_masked_image, combined_right_red_mask = util.get_right_red_pixels(cm_labels)
         left_red_masked_image, left_combined_red_mask = util.get_left_red_pixels(cm_labels)
         combined_mask = green_mask | combined_right_red_mask | left_combined_red_mask
@@ -310,11 +292,9 @@ def drivespace(depth_map):
         else:
             masked_image = updated_mask
             overtake_bearing = util.get_bearing(dist_to_free_lane_mid)
-            overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
-            overtake_lat_lon_publish.publish(f'{str(dist_to_free_lane_mid)},{str(overtake_x)},{str(overtake_y)}')
+            # overtake_x, overtake_y = util.get_point_at_distance(lat, lon, dist_to_free_lane_mid, overtake_bearing, R=6371)
             print(f"@@@@ Lane State = {const.STATE_DICT[lane_state]}")
-            lane_state = const.OVERTAKE_LANE
-            lane_state_publish.publish(lane_state)
+
     return masked_image 
 
 def main(device):
@@ -410,7 +390,7 @@ def main(device):
             lock.release()
             zed.retrieve_objects(objects, obj_runtime_param)
             zed.retrieve_measure(depth_map, sl.MEASURE.DEPTH, sl.MEM.CPU)
-            lane_state_publish.publish(lane_state)
+
             ########################################################################################
             overlay_image = drivespace(depth_map)
             collision_warning(objects, [0], display_resolution, camera_res, depth_map)
@@ -437,9 +417,7 @@ def main(device):
             if key == 27:
                 exit_signal = True
         else:
-            exit_signal = True
-    
-    viewer.exit()
+            exit_signal = True            # lane_state_publish.publish(lane_state)
     exit_signal = True
     zed.close()
 
@@ -462,7 +440,7 @@ if __name__ == '__main__':
     PSPNet_model.load_state_dict(pretrained_weights)
     PSPNet_model.eval()
     print("Inside __main__::: PSPNet_model loaded")
-    lane_state_publish.publish(const.DRIVING_LANE)
+
     with torch.no_grad():
         main(device)
 

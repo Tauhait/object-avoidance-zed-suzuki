@@ -18,202 +18,255 @@ MABX_ADDR = (const.MABX_IP, const.MABX_PORT)
 WAYPOINTS = util.get_coordinates(const.WAYPOINT_FILENAME)
 WP_LEN = len(WAYPOINTS)
 
-# global lat, lng
-global lat, lng, collision_avoidance, optical_flow, overtake_lat_lon, lane_state, collision_warning
-
-stop_counter = 0
 
 rospy.init_node('navigation', anonymous=True)
-lane_state_publish = rospy.Publisher('lane_state', Int8, queue_size=1)
+lane_state_publish = rospy.Publisher('lane_state', Int32, queue_size=1)
 
+# call back functions
+def callback_zed_camera_imu(data):
+    global acc_z
+    acc_z = 0 
+    acc_z = data.linear_acceleration.z
 
 def callback_lane_state(data):
     global lane_state
     lane_state = data.data
     
-rospy.Subscriber("/lane_state", Int8, callback_lane_state)
-
 def callback_collision_warning(data):
-    global collision_warning
-    collision_warning = data.data
+    global cw_warning
+    cw_warning = const.NO_WARNING
+    cw_warning = data.data
     
-rospy.Subscriber("/collision_warning", Float32, callback_collision_warning)
-
 def callback_collision_avoidance(data):
     global collision_avoidance
     collision_avoidance = data.data
     
-rospy.Subscriber("/collision_avoidance", Int8, callback_collision_avoidance)
-
-def callback_streering_angle(data):
-    global overtake_lat_lon
-    overtake_lat_lon = '0,0,0'
-    overtake_lat_lon = data.data
+def callback_ob_detect_class(data):
+    global ob_detect_class
+    ob_detect_class = data.data
     
-rospy.Subscriber("/overtake_lat_lon", String, callback_streering_angle)
-
 def callback_optical_flow(data):
     global optical_flow
     optical_flow = data.data
-    
-rospy.Subscriber("/optical_flow", Int32, callback_optical_flow)
    
 def callback_vel(data):
     global current_vel 
     current_vel = 3.6 * data.hor_speed  
-    
-rospy.Subscriber("/novatel/oem7/bestvel",BESTVEL, callback_vel)
 
 def callback_heading(data):
     global heading
     heading = data.azimuth  
-    
-rospy.Subscriber("/novatel/oem7/inspva",INSPVA, callback_heading)
 
 def callback_latlong(data):
-    global lat,lng   
+    global lat, lng, lat_delta, lng_delta
     lat = data.lat
     lng = data.lon
-    
+    lat_delta = data.lat_stdev
+    lng_delta = data.lon_stdev
+
+# ros node subscribes to
+rospy.Subscriber("/lane_state", Int32, callback_lane_state)
+rospy.Subscriber("/collision_warning", Int32, callback_collision_warning)
+rospy.Subscriber("/collision_avoidance", Int32, callback_collision_avoidance)
+rospy.Subscriber("/ob_detect_class", Int32, callback_ob_detect_class)
+rospy.Subscriber("/optical_flow", Int32, callback_optical_flow)
+rospy.Subscriber("/novatel/oem7/bestvel",BESTVEL, callback_vel)
+rospy.Subscriber("/novatel/oem7/inspva",INSPVA, callback_heading)
 rospy.Subscriber("/novatel/oem7/bestpos",BESTPOS, callback_latlong)
-time.sleep(0.1)
 
-def calculate_steer_output(currentLocation, current_bearing):
-    global wp
-    off_y = - currentLocation[0] + WAYPOINTS[wp][0]
-    off_x = - currentLocation[1] + WAYPOINTS[wp][1]
 
-    # calculate bearing based on position error
-    target_bearing = 90.00 + math.atan2(-off_y, off_x) * const.RAD_TO_DEG_CONVERSION 
-
-    # convert negative bearings to positive by adding 360 degrees
-    if target_bearing < 0:
-        target_bearing += 360.00
-    
-    current_bearing = heading 
-    while current_bearing is None:
-        current_bearing = heading 
-    current_bearing = float(current_bearing)
-
-    # calculate the difference between heading and bearing
-    bearing_diff = current_bearing - target_bearing
-
-    # normalize bearing difference to range between -180 and 180 degrees
-    if bearing_diff < -180:
-        bearing_diff = bearing_diff + 360
-
-    if bearing_diff > 180:
-        bearing_diff = bearing_diff - 360 
-
-    steer_output = const.STEER_GAIN * np.arctan(-1 * 2 * 3.5 * np.sin(np.radians(bearing_diff)) / 8)
-    
-    return steer_output, bearing_diff
-
-def navigation_output(latitude, longitude, current_bearing):
-    global counter, prev_time, curr_time, speed, wp, collision_warning, lane_state, collision_avoidance, overtake_lat_lon, optical_flow, prev, count, stop_counter
-    flasher = util.get_flasher(current_bearing)     # 1 Left, 2 Right, 3 Right ; For Flasher
+def actuate(speed, steer_output, indicator):
+    global counter
+    flasher = indicator
     counter = (counter + 1) % 256
-    const_speed = const.TOP_SPEED
-    print(f"Latitude: {latitude}")
-    print(f"Longitude: {longitude}")
-    print(f"Azimuth: {current_bearing}")
-
-    currentLocation = [latitude, longitude]
-    print(f"Distance between last and currwent waypoint = {np.linalg.norm(np.array(currentLocation) - WAYPOINTS[WP_LEN - 1]) * const.LAT_LNG_TO_METER} m")
-    if lane_state == const.DRIVING_LANE:
-        print(f"Navigating in DRIVING_LANE")
-        if (np.linalg.norm(np.array(currentLocation) - WAYPOINTS[WP_LEN - 1]) * const.LAT_LNG_TO_METER > 1 and wp < WP_LEN):
-            steer_output, bearing_diff = calculate_steer_output(currentLocation, current_bearing)
-            steer_output = steer_output * -1.00
-            
-            # print(f"wp = {wp}, steer_output = {steer_output}, const_speed = {const_speed}, bearing_diff = {bearing_diff}, stop_counter = {stop_counter}")
-            ####### DECIDE SPEED #############
-            const_speed = util.get_speed(collision_warning, lane_state, bearing_diff)
-            # print(f"optical_flow = {optical_flow}")
-            # print(f"wp = {wp}, steer_output = {steer_output}, const_speed = {const_speed}, bearing_diff = {bearing_diff}, stop_counter = {stop_counter}")
-            # print(f"wp = {wp}, steer_output = {steer_output}, const_speed = {const_speed}, bearing_diff = {bearing_diff}")
-            # stop_counter = stop_counter + 1
-            # print(f"const_speed = {const_speed}, optical_flow = {optical_flow}")
-            # print(f"const.BRAKE_SPEED = {const.BRAKE_SPEED}, const.SAFE_TO_OVERTAKE = {const.SAFE_TO_OVERTAKE}")
-            if const_speed == const.BRAKE_SPEED and optical_flow == const.SAFE_TO_OVERTAKE:
-                stop_counter = stop_counter + 1
-            
-            # print(f"wp = {wp}, steer_output = {steer_output}, const_speed = {const_speed}, bearing_diff = {bearing_diff}, stop_counter = {stop_counter}")
-            print(f"collision_avoidance = {collision_avoidance}, WP_LEN = {WP_LEN}")
-            if stop_counter > const.WAIT_TIME and collision_avoidance == const.OVERTAKE and optical_flow == const.SAFE_TO_OVERTAKE:
-                print(f"Waited for {stop_counter} ms so navigating to CHANGE_LANE")
-                lane_state = const.CHANGE_LANE
-                stop_counter = 0
-            distance_to_nextpoint = np.linalg.norm(np.array(currentLocation) - WAYPOINTS[wp]) * const.LAT_LNG_TO_METER
-            if wp < WP_LEN and distance_to_nextpoint < const.WP_DIST:
-                wp = wp + 1
-            print(f"wp = {wp}, steer_output = {steer_output}, const_speed = {const_speed}")
-        else:
-            const_speed = const.BRAKE_SPEED
-            print("FINISHED!!!!!!!!!!!!!!")
-        
-        print(f"wp = {wp}, steer_output = {steer_output}, const_speed = {const_speed}, bearing_diff = {bearing_diff}, stop_counter = {stop_counter}")
-
-    elif lane_state == const.CHANGE_LANE:
-        print(f"Navigating in CHANGE_LANE")
-        const_speed = util.get_speed(collision_warning, lane_state, bearing_diff)
-        _dist, _lat, _lon = overtake_lat_lon.split(",")
-        overtake_location = [float(_lat), float(_lon)]
-        if util.has_reached(currentLocation, overtake_location):
-            print(f"Reached overtake waypoint, changing lane_state to OVERTAKE_LANE")
-            lane_state = const.OVERTAKE_LANE
-    else :
-        print(f"Navigating in OVERTAKE_LANE")
-        const_speed = util.get_speed(collision_warning, lane_state, bearing_diff)
-        if collision_avoidance == const.SWITCH:
-            # go back to original lane
-            print(f"going back to original lane")
-            distance_to_nextpoint = np.linalg.norm(np.array(currentLocation) - WAYPOINTS[wp]) * const.LAT_LNG_TO_METER
-            while wp < WP_LEN and distance_to_nextpoint < const.WP_DIST:
-                wp = wp + 1
-                distance_to_nextpoint = np.linalg.norm(np.array(currentLocation) - WAYPOINTS[wp]) * const.LAT_LNG_TO_METER
-            lane_state = const.DRIVING_LANE
-        else:
-            next_lat, next_lon = util.get_next_overtake_waypoint(currentLocation[0], currentLocation[1])
-            print(f"Next overtake lane state waypoint {next_lat}, {next_lon}")
-            next_loc = [next_lat, next_lon]
-            steer_output, bearing_diff = calculate_steer_output(next_loc, current_bearing)
-            steer_output = steer_output * -1.00
-
-    print(f"Speed:  {const_speed}")
-    print(f"Steering power: {steer_output:.4f}")
-    message = util.get_msg_to_mabx(const_speed, steer_output, 0, flasher, counter)
+    message = util.get_msg_to_mabx(speed, steer_output, 0, flasher, counter)
     MABX_SOCKET.sendto(message, MABX_ADDR)
-    print(f"MABX socket message send")
+
+def log_and_print(str):
+    logger.info(str)
+    print(str)
+
+def navigation_output(latitude, longitude, current_bearing, cw_warning):
+    global counter, speed, wp, lane_state, collision_avoidance, ob_detect_class, optical_flow
+    global driving_ind, current_vel, overtake_wp, overtake_coords_list, num_waypoints, obstacle_to_overtake
+    flasher = const.BOTH_INDICATOR    #For indicator: 0 None, 1 Left, 2 Right, 3 Both;
+    counter = (counter + 1) % 256
+
+    const_speed = const.TOP_SPEED
+    current_location = [latitude, longitude]
+    distance_to_final_waypoint = np.linalg.norm(np.array(current_location) - WAYPOINTS[-1]) * const.LAT_LNG_TO_METER
+
+
+    if driving_ind:
+        lane_state_publish.publish(const.DRIVING_LANE)
+        if (distance_to_final_waypoint > 1 and wp < WP_LEN):     # to check if the final point is not less than 1m
+            if cw_warning == const.MID_WARNING:
+                log_and_print(f"Collision Warning Status : Caution")
+            elif cw_warning == const.URGENT_WARNING:
+                log_and_print(f"Collision Warning Status : Brake Signal") 
+            else:
+                log_and_print(f"Collision Warning Status : Safe")
+            
+            steer_output, bearing_diff = util.calculate_steer_output(current_location, current_bearing, heading, wp, WAYPOINTS)
+            steer_output *= -1.0
+
+            future_bearing_diff = util.calculate_bearing_difference_for_speed_reduction(current_location, current_bearing, heading, WAYPOINTS, wp, WP_LEN)
+
+            if wp < 1 or wp > WP_LEN:
+                const_speed = const.TURNING_FACTOR * const.TOP_SPEED
+            
+            if abs(bearing_diff) > const.BEARING_DIFF_THRESHOLD:
+                const_speed = const.TURNING_FACTOR * const.TOP_SPEED
+                log_and_print(f"Turning Speed from code : {const_speed:.0f} kmph")
+            elif abs(future_bearing_diff) > const.BEARING_DIFF_THRESHOLD:
+                const_speed = const.SPEED_REDUCTION_FACTOR * const_speed
+                log_and_print(f"Curve Speed from code : {const_speed:.0f} kmph")
+
+            if cw_warning == const.MID_WARNING:
+                const_speed = const.TURNING_FACTOR * const.TOP_SPEED
+            elif cw_warning == const.URGENT_WARNING:
+                const_speed = const.BRAKE_SPEED
+                # editing usage of lane_state, collision_avoidance, ob_detect_class, optical_flow
+                log_and_print(f"Collision Warning = {const.STATE_DICT[cw_warning]},\n")
+                log_and_print(f"Collision Avoidance = {const.STATE_DICT[collision_avoidance]},\n")
+                log_and_print(f"Lane State = {const.STATE_DICT[lane_state]},\n")
+                log_and_print(f"Optical Flow = {const.STATE_DICT[optical_flow]}\n")
+                if int(current_vel) == 0:
+                    if ob_detect_class == const.OBJ_CLASS_CAR or const.OBJ_CLASS_CYCLE:
+                        const.set_dynamic_obstacle(WAYPOINTS[wp][0], WAYPOINTS[wp][1])
+                    else:
+                        const.set_dynamic_obstacle(WAYPOINTS[wp + 2][0], WAYPOINTS[wp + 2][1])                   
+                    driving_ind = False
+                    overtake_wp = 0
+                    log_and_print(f"\n\nset_dynamic_obstacle is set\n\n")
+                    log_and_print(f"cw_warning = {const.STATE_DICT[cw_warning]}")
+                    num_waypoints = 0
+                    log_and_print(f"ob_detect_class = {str(const.CLASSES[ob_detect_class])}")
+                    if ob_detect_class == const.OBJ_CLASS_CAR:
+                        num_waypoints = len(const.DISTANCE_CAR)
+                    elif ob_detect_class == const.OBJ_CLASS_CYCLE:
+                        num_waypoints = len(const.DISTANCE_CYCLE)
+                    else:
+                        num_waypoints = len(const.DISTANCE_PED)
+                    
+                    obstacle_to_overtake = ob_detect_class
+            
+            distance_to_nextpoint = np.linalg.norm(np.array(current_location) - WAYPOINTS[wp]) * const.LAT_LNG_TO_METER
+            log_and_print(f"{wp} out of {WP_LEN} | Next Coordinate distance : {distance_to_nextpoint:.1f} m")
+            try:
+                if wp < WP_LEN and distance_to_nextpoint < const.LOOK_AHEAD_DISTANCE:
+                    wp += 1
+            except IndexError:
+                log_and_print("Waypoint index out of range! - Seems like you are at wrong location or Inputted wrong waypoint")
+        else:
+            log_and_print("----- FINISHED  -----")
+            log_and_print("Brake Activated")
+            steer_output = 0
+            const_speed = 0
+            flasher = 0
+    else:
+        lane_state_publish.publish(const.CHANGE_LANE)
+        if num_waypoints is None:
+            raise Exception("num_waypoints for overtaking is null")
+        if obstacle_to_overtake is None:
+            raise Exception("obstacle object class for overtaking is null")
+        if overtake_wp < num_waypoints:
+            if overtake_wp == 0:
+                util.gen_trail_of_waypoints(const.OBS_LAT, const.OBS_LON, obstacle_to_overtake)
+                print("Trail of waypoints generated for obstacle avoidance")
+                overtake_coords_list = util.get_coordinates(const.FILENAME_TRAIL)
+                print(f"len of overtake_coords_list = {len(overtake_coords_list)}")
+            
+            if overtake_coords_list is not None:
+                steer_output, bearing_diff = util.calculate_steer_output(current_location, current_bearing, heading, overtake_wp, overtake_coords_list)
+                steer_output *= -1.0
+                # if cw_warning == const.URGENT_WARNING:
+                #     const_speed = const.BRAKE_SPEED
+                # else:
+                #     const_speed = const.OVERTAKE_SPEED
+                const_speed = const.OVERTAKE_SPEED
+                
+                distance_to_next_overtake_point = np.linalg.norm(np.array(current_location) - overtake_coords_list[overtake_wp]) * const.LAT_LNG_TO_METER
+                log_and_print(f"{overtake_wp} out of {len(overtake_coords_list)} | Next overtake coordinate distance : {distance_to_next_overtake_point:.1f} m")
+                log_and_print(f"Collision Avoidance = {const.STATE_DICT[collision_avoidance]},\n")
+                # if optical_flow == const.TRAFFIC_FROM_RIGHT:
+                #     const_speed = const.BRAKE_SPEED
+                
+                try:
+                    if overtake_wp < num_waypoints and distance_to_next_overtake_point < const.OVERTAKE_LOOK_AHEAD_DISTANCE:
+                        overtake_wp += 1
+                except IndexError:
+                    log_and_print("Waypoint index out of range! - Seems like you are at wrong location or Inputted wrong waypoint")
+            else:
+                log_and_print("----- FINISHED  -----")
+                log_and_print("Brake Activated")
+                steer_output = 0
+                const_speed = 0
+                flasher = 0
+                
+        else:
+            driving_ind = True
+            log_and_print(f"Inside else part driving_ind = {driving_ind}")
+            steer_output = 0
+            const_speed = const.BRAKE_SPEED
+            flasher = 0
+            obstacle_to_overtake = None
+            num_waypoints = None
+
+        distance_to_nextpoint = np.linalg.norm(np.array(current_location) - WAYPOINTS[wp]) * const.LAT_LNG_TO_METER
+        log_and_print(f"{wp} out of {WP_LEN} | Next original path coordinate distance : {distance_to_nextpoint:.1f} m")           
+        try:
+            if wp < WP_LEN and distance_to_nextpoint < const.LOOK_AHEAD_DISTANCE_DURING_OVERTAKE:
+                wp += 1
+        except IndexError:
+            log_and_print("Waypoint index out of range! - Seems like you are at wrong location or Inputted wrong waypoint")
+            
+    log_and_print(f"Lane State from navigation = {const.STATE_DICT[lane_state]}")
+    log_and_print(f"Speed set by code: {const_speed:.0f} kmph")
+    log_and_print(f"heading = {heading}")
+    try:
+        actuate(const_speed, steer_output, flasher)
+    except Exception as e:
+        log_and_print(f"Error sending message to MABX: {e}")
+
+def main_loop():
+    global num_waypoints, obstacle_to_overtake
+    num_waypoints = None
+    obstacle_to_overtake = None
+    while not rospy.is_shutdown():
+        try:
+            log_and_print(f"Current Coordinate No. : {wp}")
+            log_and_print(" ")
+            log_and_print(f"Velocity in kmph as per GNSS = {current_vel:.0f} kmph")
+            
+            latitude = float(lat)
+            longitude = float(lng)
+            current_bearing = float(heading)
+            navigation_output(latitude, longitude, current_bearing, cw_warning)
+            time.sleep(const.SLEEP_INTERVAL/1000)           
+        except KeyboardInterrupt:       #Currently not working
+            log_and_print("Autonomous Mode is terminated manually!")
+            actuate(const.BRAKE_SPEED, const.ZERO_STEET_OUTPUT, const.NO_INDICATOR)
+            raise SystemExit
+        
+        except Exception as e:
+            log_and_print(f"An error occurred: {e}")
 
 
 if __name__ == '__main__':    
-    global speed, steer_output, counter, prev_time, curr_time, wp
+    global speed, reduction_factor, steer_output, counter, wp, driving_ind, overtake_wp, overtake_coords_list, cw_warning
     
+    log_dir = "devLogs"
+    logger = util.setup_logging(log_dir, const.WAYPOINT_FILENAME)
+    logger.info('Development Code Starting')
+
     speed = const.TOP_SPEED
     wp = 0
     steer_output = 0
     counter = 0
-    global new_file
-    prev_time = time.time()
-    curr_time = time.time()
-    new_file=time.time()
-    global prev, count
-    prev = 0
-    count = 0
-    lane_state_publish.publish(const.DRIVING_LANE)
-    while not rospy.is_shutdown():
-        try:
-            print("#####################################")
-            # print("vel in kmph = ",float(current_vel))   
-            lane_state_publish.publish(lane_state)     
-            latitude = float(lat)
-            longitude = float(lng)
-            current_bearing = float(heading)
-            time.sleep(0.1)
-            navigation_output(latitude, longitude, current_bearing)
-            print("wp", wp)            
-        except Exception:
-            pass
+    driving_ind = True
+    overtake_wp = 0
+    overtake_coords_list = []
+    main_loop()
         
         

@@ -1,8 +1,113 @@
 import random, numpy as np, math
+import os
+import logging
+import datetime
 import constant as const
 import pyzed.sl as sl
 from scipy.interpolate import CubicSpline
 from math import asin, atan2, cos, degrees, radians, sin, sqrt
+
+
+def calculate_bearing_difference_for_speed_reduction(current_location, current_bearing, heading, WAYPOINTS, wp, WP_LEN):
+    next_wp = 4                 # changed from 3 to 4
+    
+    if wp + next_wp < WP_LEN:
+        off_y = - current_location[0] + WAYPOINTS[wp+next_wp][0]
+        off_x = - current_location[1] + WAYPOINTS[wp+next_wp][1]
+    else:
+        off_y = - current_location[0] + WAYPOINTS[wp][0]
+        off_x = - current_location[1] + WAYPOINTS[wp][1]
+        
+    # calculate bearing based on position error
+    target_bearing = 90.00 + math.atan2(-off_y, off_x) * const.RAD_TO_DEG_CONVERSION
+
+    # convert negative bearings to positive by adding 360 degrees
+    if target_bearing < 0:
+        target_bearing += 360.00
+    
+    current_bearing = heading 
+    while current_bearing is None:
+        current_bearing = heading 
+
+    current_bearing = float(current_bearing)
+    future_bearing_diff = current_bearing - target_bearing
+    
+    # normalize bearing difference to range between -180 and 180 degrees
+    if future_bearing_diff < -180:
+        future_bearing_diff += 360
+    elif future_bearing_diff > 180:
+        future_bearing_diff -= 360 
+
+    # log_and_print(f"    Future Bearing Difference for ({next_wp}) waypoint : {future_bearing_diff:.1f}")
+    return future_bearing_diff
+
+def calculate_steer_output(current_location, current_bearing, heading, wp, WAYPOINTS):
+    steer_gain = const.STEER_GAIN
+    off_y = - current_location[0] + WAYPOINTS[wp][0]
+    off_x = - current_location[1] + WAYPOINTS[wp][1]
+
+    # calculate bearing based on position error
+    target_bearing = 90.00 + math.atan2(-off_y, off_x) * const.RAD_TO_DEG_CONVERSION 
+
+    # convert negative bearings to positive by adding 360 degrees
+    if target_bearing < 0:
+        target_bearing += 360.00
+    
+    current_bearing = heading 
+    while current_bearing is None:
+        current_bearing = heading 
+    current_bearing = float(current_bearing)
+
+    # calculate the difference between heading and bearing
+    bearing_diff = current_bearing - target_bearing
+
+    # normalize bearing difference to range between -180 and 180 degrees
+    if bearing_diff < -180:
+        bearing_diff += 360
+    elif bearing_diff > 180:
+        bearing_diff -= 360
+    
+    if abs(bearing_diff) < 1:           #Nullify the small the bearing difference
+        bearing_diff = 0
+        steer_gain = 300
+        # log_and_print(f"    Nullied | Bearing Difference of {temp:.1f}")
+    elif abs(bearing_diff) > 20:
+        steer_gain = 1200
+    
+    steer_output = steer_gain * np.arctan(-1 * 2 * 3.5 * np.sin(np.radians(bearing_diff)) / 8)
+    return steer_output, bearing_diff
+
+def setup_logging(log_dir, file_path):
+    # Get the base filename from the file path
+    base_filename = os.path.basename(file_path)
+    # Remove the file extension to get the desired string
+    logFileName = os.path.splitext(base_filename)[0]
+
+    # Create the log directory if it does not exist
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    # Set up the logging format
+    log_format = "%(asctime)s [%(levelname)s]: %(message)s"
+    logging.basicConfig(level=logging.DEBUG, format=log_format)
+
+    # Create a log file with the current timestamp as the name
+    log_filename = logFileName + "-" + datetime.datetime.now().strftime("%d-%m-%Y :: %H,%M,%S") + ".log"
+    log_path = os.path.join(log_dir, log_filename)
+
+    # Add a file handler to save logs to the file
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.DEBUG)
+
+    # Set the log format for the file handler
+    file_handler.setFormatter(logging.Formatter(log_format))
+    # file_handler.flush = True
+
+    # Add the file handler to the logger
+    logger = logging.getLogger('')
+    logger.addHandler(file_handler)
+
+    return logger
 
 def calculate_steer_output_change_lane(currentLocation, targetLocation, current_bearing, heading):
     off_y = - currentLocation[0] + targetLocation[0]
@@ -161,7 +266,6 @@ def get_bearing(hyp, base=1.6):
         bearing = math.atan(perp / base)
     return 90 - math.degrees(bearing)
 
-
 def get_point_at_distance(lat, lon, d, bearing, R=6371):
     """
     lat: initial latitude, in degrees
@@ -185,8 +289,6 @@ def get_point_at_distance(lat, lon, d, bearing, R=6371):
     )
     print(f"degrees(lat2) = {degrees(lat2)}, degrees(lon2) = {degrees(lon2)}")
     return degrees(lat2), degrees(lon2)
-
-
 
 def set_angle(m_nAngle, deltaAngle):
     m_nAngle = m_nAngle + deltaAngle
@@ -223,9 +325,6 @@ def get_msg_to_mabx(speed, m_nAngle, angle, flasher, counter):
 
     msg_list[2] = calc_checksum(msg_list)
     message = bytearray(msg_list)
-    #print("Speed: ", message[8], message[9])
-    #print("Angle: ", message[10], message[11])
-    #print("===============================================================================")
     return message
 
 def get_flasher(angle):
@@ -257,6 +356,62 @@ def get_coordinates(file_path):
         print(f"Error: The file '{file_path}' could not be found.")
     except Exception as e:
         # Handle any other unexpected exceptions
-        print(f"An error occurred: {e}")
+        print(f"An error occurred from get_coordinates() function: {e}")
     
     return coordinates_list
+
+def get_point_at_distance(lat1, lon1, d, bearing, R=6371):
+    """
+    lat: initial latitude, in degrees
+    lon: initial longitude, in degrees
+    d: target distance from initial
+    bearing: (true) heading in degrees
+    R: optional radius of sphere, defaults to mean radius of earth
+
+    Returns new lat/lon coordinate {d}km from initial, in degrees
+    """
+    lat1 = radians(lat1)
+    lon1 = radians(lon1)
+    a = radians(bearing)
+    lat2 = asin(sin(lat1) * cos(d/R) + cos(lat1) * sin(d/R) * cos(a))
+    lon2 = lon1 + atan2(
+        sin(a) * sin(d/R) * cos(lat1),
+        cos(d/R) - sin(lat1) * sin(lat2)
+    )
+    return (degrees(lat2), degrees(lon2))
+
+
+def gen_trail_of_waypoints(obs_lat, obs_lon, ob_class):
+    # Number of waypoints in the sequence
+    # Check if the file exists
+    if os.path.exists(const.FILENAME_TRAIL):
+        # Delete the file
+        os.remove(const.FILENAME_TRAIL)
+    
+    dist = []
+    bear = []
+    if ob_class == const.OBJ_CLASS_CAR:
+        num_waypoints = len(const.DISTANCE_CAR)
+        dist = const.DISTANCE_CAR
+        bear = const.BEARING_CAR
+
+    elif ob_class == const.OBJ_CLASS_CYCLE:
+        num_waypoints = len(const.DISTANCE_CYCLE)
+        dist = const.DISTANCE_CYCLE
+        bear = const.BEARING_CYCLE
+    else:
+        num_waypoints = len(const.DISTANCE_PED)
+        dist = const.DISTANCE_PED
+        bear = const.BEARING_PED
+    print(f"num_waypoints = {num_waypoints}")
+    with open(const.FILENAME_TRAIL, 'w') as file:
+        overtake_lat, overtake_lon = get_point_at_distance(obs_lat, obs_lon, dist[0], bear[0])
+        file.write(f"[{overtake_lat}, {overtake_lon}]\n")
+        
+        for n in range(1, num_waypoints):
+            print(f"{overtake_lat}, {overtake_lon}")
+            gen_lat, gen_lon = get_point_at_distance(overtake_lat, overtake_lon, dist[n], bear[n])
+            file.write(f"[{gen_lat}, {gen_lon}]\n")
+            overtake_lat = gen_lat
+            overtake_lon = gen_lon
+    
